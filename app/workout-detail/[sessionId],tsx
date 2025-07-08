@@ -11,9 +11,9 @@ import {
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { 
-  ArrowLeft, 
-  Settings, 
+import {
+  ArrowLeft,
+  Settings,
   Calendar,
   Play,
   X,
@@ -27,8 +27,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
-import { getWorkoutTemplate } from '@/lib/workoutTemplates';
-import { getTrainingSession } from '@/lib/trainingSessionQueries';
+import { getWorkoutTemplate } from '@/lib/workoutTemplates'; // Import from new lib
+import { getTrainingSession } from '@/lib/trainingSessionQueries'; // Import from new lib
 import { TrainingSession, WorkoutTemplate } from '@/types/workout';
 
 const { width, height } = Dimensions.get('window');
@@ -60,7 +60,7 @@ export default function WorkoutDetailScreen() {
   const loadSessionDetails = async () => {
     try {
       setLoading(true);
-      
+
       // Load training session
       const session = await getTrainingSession(sessionId as string);
       if (!session) {
@@ -72,33 +72,68 @@ export default function WorkoutDetailScreen() {
 
       setTrainingSession(session);
 
+      let workoutTemplate = null;
       // Load template if session has one
       if (session.template_id) {
-        const workoutTemplate = await getWorkoutTemplate(session.template_id);
+        workoutTemplate = await getWorkoutTemplate(session.template_id);
         if (workoutTemplate) {
           setTemplate(workoutTemplate);
-          
-          // Transform exercises with additional details
+
+          // Transform exercises with additional details from template
           const exercisesWithDetails: ExerciseWithDetails[] = workoutTemplate.exercises.map((exercise, index) => ({
             id: exercise.exercise.id,
             name: exercise.exercise.name,
             sets: exercise.sets_config?.length || 0,
-            reps: exercise.sets_config?.map(set => set.reps).join(', ') || '',
+            reps: exercise.sets_config?.map(set => set.reps).filter(Boolean).join(', ') || '', // Filter out undefined/null reps
             image: getExerciseImage(exercise.exercise.name, index),
           }));
-          
+
           setExercises(exercisesWithDetails);
+        } else {
+          console.warn(`Workout template with ID ${session.template_id} not found.`);
+          // Fallback to session.exercises_completed if template not found
+          if (session.exercises_completed && session.exercises_completed.length > 0) {
+            const exercisesFromCompletion: ExerciseWithDetails[] = session.exercises_completed.map((ex: any, index: number) => ({
+              id: ex.exerciseId || `comp-ex-${index}`,
+              name: ex.exerciseName || `Exercise ${index + 1}`,
+              sets: ex.sets?.length || 0,
+              reps: ex.sets?.map((s: any) => s.reps).filter(Boolean).join(', ') || '',
+              image: getExerciseImage(ex.exerciseName || 'default', index),
+            }));
+            setExercises(exercisesFromCompletion);
+          } else {
+            // If no template and no exercises_completed, show basic info
+            const basicExercises: ExerciseWithDetails[] = [{
+              id: 'custom-1',
+              name: session.type || 'Training Session',
+              sets: 0,
+              reps: 'Custom',
+              image: getExerciseImage('training', 0),
+            }];
+            setExercises(basicExercises);
+          }
         }
       } else {
         // Handle sessions without templates
-        const basicExercises: ExerciseWithDetails[] = [{
-          id: 'custom-1',
-          name: session.type || 'Training Session',
-          sets: 0,
-          reps: 'Custom',
-          image: getExerciseImage('training', 0),
-        }];
-        setExercises(basicExercises);
+        if (session.exercises_completed && session.exercises_completed.length > 0) {
+          const exercisesFromCompletion: ExerciseWithDetails[] = session.exercises_completed.map((ex: any, index: number) => ({
+            id: ex.exerciseId || `comp-ex-${index}`,
+            name: ex.exerciseName || `Exercise ${index + 1}`,
+            sets: ex.sets?.length || 0,
+            reps: ex.sets?.map((s: any) => s.reps).filter(Boolean).join(', ') || '',
+            image: getExerciseImage(ex.exerciseName || 'default', index),
+          }));
+          setExercises(exercisesFromCompletion);
+        } else {
+          const basicExercises: ExerciseWithDetails[] = [{
+            id: 'custom-1',
+            name: session.type || 'Training Session',
+            sets: 0,
+            reps: 'Custom',
+            image: getExerciseImage('training', 0),
+          }];
+          setExercises(basicExercises);
+        }
       }
     } catch (error) {
       console.error('Error loading session details:', error);
@@ -113,12 +148,12 @@ export default function WorkoutDetailScreen() {
   const getExerciseImage = (exerciseName: string, index: number): string => {
     // Use different Pexels images for different exercises
     const images = [
-      'https://images.pexels.com/photos/1552242/pexels-photo-1552242.jpeg?auto=compress&cs=tinysrgb&w=400',
-      'https://images.pexels.com/photos/1552106/pexels-photo-1552106.jpeg?auto=compress&cs=tinysrgb&w=400',
-      'https://images.pexels.com/photos/416778/pexels-photo-416778.jpeg?auto=compress&cs=tinysrgb&w=400',
-      'https://images.pexels.com/photos/3822356/pexels-photo-3822356.jpeg?auto=compress&cs=tinysrgb&w=400',
-      'https://images.pexels.com/photos/1431282/pexels-photo-1431282.jpeg?auto=compress&cs=tinysrgb&w=400',
-      'https://images.pexels.com/photos/1229356/pexels-photo-1229356.jpeg?auto=compress&cs=tinysrgb&w=400',
+      'https://images.pexels.com/photos/1552242/pexels-photo-1552242.jpeg?auto=compress&cs=tinysrgb&w=400', // Weightlifting
+      'https://images.pexels.com/photos/1552106/pexels-photo-1552106.jpeg?auto=compress&cs=tinysrgb&w=400', // Dumbbells
+      'https://images.pexels.com/photos/416778/pexels-photo-416778.jpeg?auto=compress&cs=tinysrgb&w=400', // Running
+      'https://images.pexels.com/photos/3822356/pexels-photo-3822356.jpeg?auto=compress&cs=tinysrgb&w=400', // Yoga/Stretching
+      'https://images.pexels.com/photos/1431282/pexels-photo-1431282.jpeg?auto=compress&cs=tinysrgb&w=400', // Gym equipment
+      'https://images.pexels.com/photos/1229356/pexels-photo-1229356.jpeg?auto=compress&cs=tinysrgb&w=400', // Boxing
     ];
     return images[index % images.length];
   };
@@ -183,14 +218,14 @@ export default function WorkoutDetailScreen() {
           <Play size={16} color="#FFFFFF" />
         </View>
       </View>
-      
+
       <View style={styles.exerciseInfo}>
         <Text style={styles.exerciseName}>{exercise.name}</Text>
         <Text style={styles.exerciseDetails}>
           {exercise.reps ? `${exercise.reps} reps` : 'Custom reps'} • {exercise.sets} sets
         </Text>
       </View>
-      
+
       <View style={styles.exerciseSets}>
         <Text style={styles.exerciseSetCount}>x{exercise.sets}</Text>
       </View>
@@ -224,7 +259,7 @@ export default function WorkoutDetailScreen() {
     <View style={styles.container}>
       {/* Hero Section with Background Image */}
       <View style={styles.heroSection}>
-        <Image 
+        <Image
           source={{ uri: 'https://images.pexels.com/photos/1552242/pexels-photo-1552242.jpeg?auto=compress&cs=tinysrgb&w=800' }}
           style={styles.heroImage}
         />
@@ -317,7 +352,7 @@ export default function WorkoutDetailScreen() {
             <Text style={styles.sectionTitle}>Session Rating</Text>
             <View style={styles.ratingContainer}>
               <View style={styles.ratingStars}>
-                {[1, 2, 3, 4, 5].map((star) => (
+                {.map((star) => (
                   <Star
                     key={star}
                     size={24}
@@ -385,21 +420,21 @@ export default function WorkoutDetailScreen() {
             <View style={styles.modalIcon}>
               <Calendar size={32} color={colors.primary} />
             </View>
-            
+
             <Text style={styles.modalTitle}>Reschedule Session</Text>
             <Text style={styles.modalMessage}>
               Do you want to move this session to today?
             </Text>
-            
+
             <TouchableOpacity style={styles.modalButton} onPress={handleMoveToToday}>
               <Text style={styles.modalButtonText}>Move to today</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity onPress={() => setShowRescheduleModal(false)}>
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity 
+
+            <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={() => setShowRescheduleModal(false)}
             >

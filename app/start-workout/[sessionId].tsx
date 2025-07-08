@@ -11,10 +11,10 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { 
-  ArrowLeft, 
-  Play, 
-  Pause, 
+import {
+  ArrowLeft,
+  Play,
+  Pause,
   Square,
   Clock,
   Check,
@@ -26,31 +26,13 @@ import {
 } from 'lucide-react-native';
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
-import { getWorkoutTemplate } from '@/lib/workoutTemplates';
-import { 
-  getTrainingSession, 
-  updateTrainingSessionData, 
-  completeTrainingSession 
-} from '@/lib/trainingSessionQueries';
-import { TrainingSession, WorkoutTemplate, WorkoutSet } from '@/types/workout';
-
-interface ActiveSet {
-  id: string;
-  reps?: number;
-  weight?: number;
-  duration?: number;
-  rest_time?: number;
-  completed: boolean;
-  notes?: string;
-}
-
-interface ActiveExercise {
-  exerciseId: string;
-  exerciseName: string;
-  sets: ActiveSet[];
-  currentSetIndex: number;
-  notes: string;
-}
+import { getWorkoutTemplate } from '@/lib/workoutTemplates'; // Import from new lib
+import {
+  getTrainingSession,
+  updateTrainingSessionData,
+  completeTrainingSession
+} from '@/lib/trainingSessionQueries'; // Import from new lib
+import { TrainingSession, WorkoutSet, ActiveExercise, ActiveSet, WorkoutTemplate } from '@/types/workout'; // Import ActiveExercise, ActiveSet, WorkoutTemplate
 
 export default function StartWorkoutScreen() {
   const colorScheme = useColorScheme();
@@ -128,7 +110,7 @@ export default function StartWorkoutScreen() {
   const loadSessionData = async () => {
     try {
       setLoading(true);
-      
+
       // Load training session
       const session = await getTrainingSession(sessionId as string);
       if (!session) {
@@ -140,15 +122,19 @@ export default function StartWorkoutScreen() {
 
       setTrainingSession(session);
 
-      // Load template if session has one
+      let workoutTemplate = null;
       if (session.template_id) {
-        const workoutTemplate = await getWorkoutTemplate(session.template_id);
+        workoutTemplate = await getWorkoutTemplate(session.template_id);
         if (workoutTemplate) {
           setTemplate(workoutTemplate);
-          initializeExercises(workoutTemplate, session);
+          initializeExercises(workoutTemplate); // Initialize from template
+        } else {
+          // If template_id exists but template not found, log and proceed with basic structure
+          console.warn(`Workout template with ID ${session.template_id} not found.`);
+          initializeFromSessionData(session);
         }
       } else {
-        // Handle sessions without templates
+        // Handle sessions without templates - create basic structure
         initializeFromSessionData(session);
       }
 
@@ -167,18 +153,18 @@ export default function StartWorkoutScreen() {
     }
   };
 
-  const initializeExercises = (template: WorkoutTemplate, session: TrainingSession) => {
+  const initializeExercises = (template: WorkoutTemplate) => {
     const activeExercises: ActiveExercise[] = template.exercises.map((templateExercise, index) => ({
       exerciseId: templateExercise.exercise.id,
       exerciseName: templateExercise.exercise.name,
       sets: templateExercise.sets_config.map((setConfig: WorkoutSet, setIndex: number) => ({
-        id: `set-${index}-${setIndex}`,
+        id: `set-${templateExercise.exercise.id}-${setIndex}`, // Unique ID for each set
         reps: setConfig.reps,
         weight: setConfig.weight,
         duration: setConfig.duration,
-        rest_time: setConfig.rest_time || 60,
+        rest_time: setConfig.rest_time || 60, // Ensure rest_time is always present
         completed: false,
-        notes: '',
+        notes: setConfig.notes || '',
       })),
       currentSetIndex: 0,
       notes: templateExercise.notes || '',
@@ -186,23 +172,44 @@ export default function StartWorkoutScreen() {
     setExercises(activeExercises);
   };
 
+  // This function is now a fallback for sessions without a template or if template loading fails
   const initializeFromSessionData = (session: TrainingSession) => {
-    // Handle sessions without templates - create basic structure
-    const basicExercises: ActiveExercise[] = [{
-      exerciseId: 'custom-1',
-      exerciseName: 'Custom Exercise',
-      sets: [{
-        id: 'set-0-0',
-        reps: 10,
-        weight: 0,
-        rest_time: 60,
-        completed: false,
-        notes: '',
-      }],
-      currentSetIndex: 0,
-      notes: 'Add your exercises and sets',
-    }];
-    setExercises(basicExercises);
+    // If session has exercises_completed data, use that
+    if (session.exercises_completed && session.exercises_completed.length > 0) {
+      const activeExercises: ActiveExercise[] = session.exercises_completed.map((completedExercise: any, exIndex: number) => ({
+        exerciseId: completedExercise.exerciseId || `custom-ex-${exIndex}`,
+        exerciseName: completedExercise.exerciseName || `Exercise ${exIndex + 1}`,
+        sets: completedExercise.sets.map((completedSet: any, setIndex: number) => ({
+          id: completedSet.id || `custom-set-${exIndex}-${setIndex}`,
+          reps: completedSet.reps,
+          weight: completedSet.weight,
+          duration: completedSet.duration,
+          rest_time: completedSet.rest_time || 60,
+          completed: completedSet.completed || false,
+          notes: completedSet.notes || '',
+        })),
+        currentSetIndex: completedExercise.currentSetIndex || 0,
+        notes: completedExercise.notes || '',
+      }));
+      setExercises(activeExercises);
+    } else {
+      // Create a basic structure if no template and no exercises_completed
+      const basicExercises: ActiveExercise[] = [{
+        exerciseId: 'custom-1',
+        exerciseName: session.type || 'Custom Workout',
+        sets: [{
+          id: 'set-0-0',
+          reps: 10,
+          weight: 0,
+          rest_time: 60,
+          completed: false,
+          notes: '',
+        }],
+        currentSetIndex: 0,
+        notes: 'Add your exercises and sets',
+      }];
+      setExercises(basicExercises);
+    }
   };
 
   const loadExistingSessionData = (sessionData: any) => {
@@ -334,9 +341,9 @@ export default function StartWorkoutScreen() {
       'Your progress will be saved. You can resume this workout later.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Exit', 
-          style: 'default', 
+        {
+          text: 'Exit',
+          style: 'default',
           onPress: async () => {
             await saveSessionProgress();
             router.back();
@@ -350,7 +357,7 @@ export default function StartWorkoutScreen() {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    
+
     if (hours > 0) {
       return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
@@ -369,16 +376,16 @@ export default function StartWorkoutScreen() {
         isCompleted && styles.completedSetRow
       ]}>
         <Text style={styles.setNumber}>{setIndex + 1}</Text>
-        
+
         <View style={styles.setInputs}>
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Reps</Text>
             <TextInput
               style={[styles.setInput, isCompleted && styles.completedInput]}
               value={set.reps?.toString() || ''}
-              onChangeText={(value) => {
+              onChangeText={(text) => {
                 const updatedExercises = [...exercises];
-                updatedExercises[currentExerciseIndex].sets[setIndex].reps = parseInt(value) || 0;
+                updatedExercises[currentExerciseIndex].sets[setIndex].reps = parseInt(text) || 0;
                 setExercises(updatedExercises);
               }}
               keyboardType="numeric"
@@ -393,9 +400,9 @@ export default function StartWorkoutScreen() {
             <TextInput
               style={[styles.setInput, isCompleted && styles.completedInput]}
               value={set.weight?.toString() || ''}
-              onChangeText={(value) => {
+              onChangeText={(text) => {
                 const updatedExercises = [...exercises];
-                updatedExercises[currentExerciseIndex].sets[setIndex].weight = parseFloat(value) || 0;
+                updatedExercises[currentExerciseIndex].sets[setIndex].weight = parseFloat(text) || 0;
                 setExercises(updatedExercises);
               }}
               keyboardType="numeric"
@@ -410,9 +417,9 @@ export default function StartWorkoutScreen() {
             <TextInput
               style={[styles.setInput, isCompleted && styles.completedInput]}
               value={set.rest_time?.toString() || ''}
-              onChangeText={(value) => {
+              onChangeText={(text) => {
                 const updatedExercises = [...exercises];
-                updatedExercises[currentExerciseIndex].sets[setIndex].rest_time = parseInt(value) || 0;
+                updatedExercises[currentExerciseIndex].sets[setIndex].rest_time = parseInt(text) || 0;
                 setExercises(updatedExercises);
               }}
               keyboardType="numeric"
@@ -476,7 +483,7 @@ export default function StartWorkoutScreen() {
         <TouchableOpacity onPress={exitWorkout} style={styles.backButton}>
           <ArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        
+
         <View style={styles.headerCenter}>
           <Text style={styles.workoutTitle}>
             {template?.name || trainingSession.type || 'Training Session'}
@@ -490,8 +497,8 @@ export default function StartWorkoutScreen() {
               <Play size={20} color="#FFFFFF" />
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity 
-              style={styles.pauseButton} 
+            <TouchableOpacity
+              style={styles.pauseButton}
               onPress={isPaused ? resumeWorkout : pauseWorkout}
             >
               {isPaused ? (
@@ -507,11 +514,11 @@ export default function StartWorkoutScreen() {
       {/* Progress Bar */}
       <View style={styles.progressContainer}>
         <View style={styles.progressBackground}>
-          <View 
+          <View
             style={[
-              styles.progressFill, 
+              styles.progressFill,
               { width: `${((currentExerciseIndex + 1) / exercises.length) * 100}%` }
-            ]} 
+            ]}
           />
         </View>
         <Text style={styles.progressText}>
@@ -523,7 +530,7 @@ export default function StartWorkoutScreen() {
         {/* Current Exercise */}
         <View style={styles.exerciseCard}>
           <Text style={styles.exerciseName}>{currentExercise.exerciseName}</Text>
-          
+
           <View style={styles.setsContainer}>
             <View style={styles.setsHeader}>
               <Text style={styles.setHeaderText}>Set</Text>
@@ -532,8 +539,8 @@ export default function StartWorkoutScreen() {
               <Text style={styles.setHeaderText}>Rest</Text>
               <Text style={styles.setHeaderText}>✓</Text>
             </View>
-            
-            {currentExercise.sets.map((_, setIndex) => 
+
+            {currentExercise.sets.map((_, setIndex) =>
               renderSetInput(currentExercise, setIndex)
             )}
           </View>
@@ -593,7 +600,7 @@ export default function StartWorkoutScreen() {
         </View>
 
         {/* Finish Workout Button */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.finishButton}
           onPress={() => setShowFinishModal(true)}
         >
@@ -615,13 +622,13 @@ export default function StartWorkoutScreen() {
           <View style={styles.restModalContent}>
             <Text style={styles.restModalTitle}>Rest Time</Text>
             <Text style={styles.restTimer}>{formatTime(restTime)}</Text>
-            
+
             <View style={styles.restActions}>
               <TouchableOpacity style={styles.skipRestButton} onPress={skipRestTimer}>
                 <Text style={styles.skipRestText}>Skip Rest</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={styles.addTimeButton}
                 onPress={() => setRestTime(prev => prev + 30)}
               >
@@ -1107,7 +1114,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     marginBottom: 4,
   },
   ratingContainer: {
-    marginBottom: 24,
+    alignItems: 'center',
   },
   ratingLabel: {
     fontFamily: 'Inter-SemiBold',

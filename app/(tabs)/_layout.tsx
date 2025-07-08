@@ -6,7 +6,7 @@ import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { useUserRole } from '@/contexts/UserContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEffect } from 'react';
-import { router } from 'expo-router';
+import { router, usePathname } from 'expo-router';
 import React from 'react';
 import { requestNotificationPermissions, addNotificationResponseReceivedListener, cleanupExpiredNotifications } from '@/utils/notificationService';
 import { View, Text } from 'react-native';
@@ -14,7 +14,7 @@ import { View, Text } from 'react-native';
 function NotificationListener() {
   const { user } = useAuth();
   useEffect(() => {
-    let subscription;
+    let subscription: { remove: () => void } | undefined;
     if (user) {
       (async () => {
         await requestNotificationPermissions();
@@ -39,13 +39,13 @@ export default function TabLayout() {
   const colors = getColors(colorScheme ?? 'light');
   const { userRole } = useUserRole();
   const { user, loading } = useAuth();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (!loading && !user) {
-      // User is not authenticated, redirect to auth
-      router.replace('/(auth)/welcome');
+    if (!loading && !user && pathname !== '/(auth)/welcome') {
+      router.replace('/(auth)/login');
     }
-  }, [user, loading]);
+  }, [user, loading, pathname]);
 
   // Define role-specific tab configurations
   const getTabsForRole = () => {
@@ -175,14 +175,15 @@ export default function TabLayout() {
       ],
     };
 
-    return roleTabs[userRole || 'client'] || roleTabs.client;
+    // return roleTabs[userRole || 'client'] || roleTabs.client;
+    return roleTabs[(userRole as keyof typeof roleTabs) || 'client'] || roleTabs.client;
   };
 
   const tabs = getTabsForRole();
 
   // Memoize tabBarStyle to ensure it updates with color scheme and remains consistent
   const tabBarStyle = React.useMemo(() => ({
-    position: 'absolute',
+    position: 'absolute' as const,
     left: 0,
     right: 0,
     bottom: 0,

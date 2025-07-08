@@ -96,6 +96,24 @@ export interface TrainingSession {
   updated_at: string;
 }
 
+export interface WorkoutSession {
+  id: string;
+  client_id: string;
+  template_id?: string;
+  plan_id?: string;
+  date: string;
+  start_time?: string;
+  end_time?: string;
+  exercises: {
+    exercise_id: string;
+    sets: (WorkoutSet & { completed?: boolean; id?: string })[];
+    notes?: string;
+  }[];
+  notes?: string;
+  completed: boolean;
+  synced: boolean;
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -137,4 +155,23 @@ export interface ClientGoal {
   status: 'active' | 'completed' | 'paused' | 'cancelled';
   created_at: string;
   updated_at: string;
+}
+
+// New interfaces for active session management
+export interface ActiveSet {
+  id: string;
+  reps?: number;
+  weight?: number;
+  duration?: number;
+  rest_time?: number; // Consistent with DB schema
+  completed: boolean;
+  notes?: string;
+}
+
+export interface ActiveExercise {
+  exerciseId: string;
+  exerciseName: string;
+  sets: ActiveSet[];
+  currentSetIndex: number;
+  notes: string;
 }

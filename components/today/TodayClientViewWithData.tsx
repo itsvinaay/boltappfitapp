@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+// components/today/TodayClientViewNew.tsx
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -28,6 +29,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useColorScheme, getColors } from '../../hooks/useColorScheme';
 import { useTodayData } from '../../hooks/useTodayData';
 import { router } from 'expo-router';
+import { getWorkoutTemplates, initializeDefaultTemplates, WorkoutTemplate } from '../../lib/workoutTemplates';
 
 const { width } = Dimensions.get('window');
 
@@ -38,6 +40,24 @@ export default function TodayClientViewWithData() {
   const { profile, todayStats, workoutSessions, activeGoals, clientAssignment, loading, refreshData } = useTodayData();
 
   const [showMissedWorkout, setShowMissedWorkout] = useState(true);
+  const [workoutTemplates, setWorkoutTemplates] = useState<WorkoutTemplate[]>([]);
+
+  useEffect(() => {
+    loadWorkoutTemplates();
+  }, []);
+
+  const loadWorkoutTemplates = async () => {
+    try {
+      // Initialize default templates if none exist
+      await initializeDefaultTemplates();
+      
+      // Load templates from database
+      const templates = await getWorkoutTemplates();
+      setWorkoutTemplates(templates);
+    } catch (error) {
+      console.error('Error loading workout templates:', error);
+    }
+  };
 
   const getCurrentDate = () => {
     const date = new Date();
@@ -60,9 +80,17 @@ export default function TodayClientViewWithData() {
   const stepGoal = 10000;
   const stepProgress = (steps / stepGoal) * 100;
 
-  // Get today's workout
-  const todaysWorkout = workoutSessions.find(session => !session.completed);
-  const completedWorkouts = workoutSessions.filter(session => session.completed);
+  // Get today's workout - use first available template if no specific workout
+  // Filter for sessions that are not yet completed
+  const todaysWorkout = workoutSessions.find(session => session.status !== 'completed') || 
+    (workoutTemplates.length > 0 ? { 
+      id: workoutTemplates[0].id, 
+      exercises: workoutTemplates[0].exercises,
+      duration_minutes: workoutTemplates[0].estimated_duration_minutes, // Corrected property name
+      template: workoutTemplates[0]
+    } : null);
+  
+  const completedWorkouts = workoutSessions.filter(session => session.status === 'completed'); // Corrected status check
 
   // Get active goal
   const activeGoal = activeGoals[0] || {
@@ -111,6 +139,11 @@ export default function TodayClientViewWithData() {
     router.push('/food-journal');
   };
 
+  const handleRefresh = async () => {
+    await refreshData();
+    await loadWorkoutTemplates();
+  };
+
   const renderTodaysWorkout = () => {
     if (!todaysWorkout) {
       return (
@@ -146,7 +179,8 @@ export default function TodayClientViewWithData() {
             <View style={styles.workoutInfo}>
               <Text style={styles.workoutLabel}>TODAY'S WORKOUT</Text>
               <Text style={styles.workoutName}>
-                {todaysWorkout.exercises?.length ? `${todaysWorkout.exercises.length} exercises` : 'Custom Workout'}
+                {todaysWorkout.template?.name || 
+                 (todaysWorkout.exercises?.length ? `${todaysWorkout.exercises.length} exercises` : 'Custom Workout')}
               </Text>
               <Text style={styles.workoutDetails}>
                 {todaysWorkout.duration_minutes ? `${todaysWorkout.duration_minutes} min` : 'Duration varies'}
@@ -177,7 +211,7 @@ export default function TodayClientViewWithData() {
         style={[styles.scrollView, { backgroundColor: colors.background }]} 
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={loading} onRefresh={refreshData} />
+          <RefreshControl refreshing={loading} onRefresh={handleRefresh} />
         }
       >
         {/* Header */}

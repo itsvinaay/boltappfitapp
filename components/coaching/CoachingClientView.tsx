@@ -9,9 +9,9 @@ import {
   RefreshControl,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { 
-  Dumbbell, 
-  Clock, 
+import {
+  Dumbbell,
+  Clock,
   Flame,
   Trophy,
   Play,
@@ -27,9 +27,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useColorScheme, getColors } from '../../hooks/useColorScheme';
 import { router } from 'expo-router';
 import { useTodayDataNew } from '../../hooks/useTodayDataNew';
-import { getWorkoutTemplates, WorkoutTemplate } from '../../lib/workoutTemplates';
-import { getClientTrainingSessions } from '../../lib/trainingSessionQueries';
+import { getWorkoutTemplates } from '../../lib/workoutTemplates'; // Import from new lib
+import { getClientTrainingSessions } from '../../lib/trainingSessionQueries'; // Import from new lib
 import { supabase } from '../../lib/supabase';
+import { WorkoutTemplate } from '@/types/workout'; // Import WorkoutTemplate type
 
 const { width } = Dimensions.get('window');
 
@@ -57,12 +58,14 @@ export default function CoachingClientView() {
 
   useEffect(() => {
     loadWorkoutTemplates();
-    loadWeeklyWorkouts();
-  }, []);
+    // Only load weekly workouts if userProfile is available from useTodayDataNew
+    if (data?.profile?.id) {
+      loadWeeklyWorkouts(data.profile.id);
+    }
+  }, [data?.profile?.id]); // Re-run when profile ID changes
 
   const loadWorkoutTemplates = async () => {
     try {
-      // Fetch templates from Supabase database
       const templates = await getWorkoutTemplates();
       setWorkoutTemplates(templates);
     } catch (error) {
@@ -70,29 +73,9 @@ export default function CoachingClientView() {
     }
   };
 
-  const loadWeeklyWorkouts = async () => {
+  const loadWeeklyWorkouts = async (clientId: string) => {
     try {
       setLoadingWeekly(true);
-      
-      // Get current user profile
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        console.log('No authenticated user found');
-        setLoadingWeekly(false);
-        return;
-      }
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('user_id', user.id)
-        .single();
-
-      if (!profile) {
-        console.log('No profile found for user');
-        setLoadingWeekly(false);
-        return;
-      }
 
       // Get current week dates (Monday to Sunday)
       const today = new Date();
@@ -108,50 +91,21 @@ export default function CoachingClientView() {
         weekDates.push(date);
       }
 
-      // Fetch workout sessions for this week
+      // Fetch training sessions for this week using the new lib function
       const startDate = weekDates[0].toISOString().split('T')[0];
       const endDate = weekDates[6].toISOString().split('T')[0];
 
-      const { data: workoutSessions, error: sessionsError } = await supabase
-        .from('workout_sessions')
-        .select('*')
-        .eq('client_id', profile.id)
-        .gte('date', startDate)
-        .lte('date', endDate)
-        .order('date', { ascending: true });
-
-      if (sessionsError) {
-        console.error('Error fetching workout sessions:', sessionsError);
-      }
-
-      // Fetch training sessions for this week
-      const { data: trainingSessions, error: trainingError } = await supabase
-        .from('training_sessions')
-        .select('*')
-        .eq('client_id', profile.id)
-        .gte('scheduled_date', startDate)
-        .lte('scheduled_date', endDate)
-        .order('scheduled_date', { ascending: true });
-
-      if (trainingError) {
-        console.error('Error fetching training sessions:', trainingError);
-      }
+      const trainingSessions = await getClientTrainingSessions(clientId, startDate, endDate);
 
       // Create weekly workout structure
       const dayNames = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
       const weeklyData: WeeklyWorkout[] = weekDates.map((date, index) => {
-        const dateString = date.toISOString().split('T')[0];
+        const dateString = date.toISOString().split('T');
         const dayNumber = date.getDate();
-        
-        // Check for workout session on this date
-        const workoutSession = workoutSessions?.find(session => session.date === dateString);
-        
-        // Check for training session on this date
-        const trainingSession = trainingSessions?.find(session => session.scheduled_date === dateString);
-        
-        // Prefer workout session over training session
-        const session = workoutSession || trainingSession;
-        
+
+        // Find training session on this date
+        const session = trainingSessions.find(s => s.scheduled_date === dateString);
+
         let template = null;
         let completed = false;
         let missed = false;
@@ -165,33 +119,32 @@ export default function CoachingClientView() {
             if (templateData) {
               template = { id: templateData.id, name: templateData.name };
             } else {
-              // Fallback template info
+              // Fallback template info if template not found in local state
               template = { id: session.template_id, name: 'Workout' };
             }
           } else {
-            // Generic workout/training session
-            template = { 
-              id: session.id, 
-              name: session.type || 'Training Session' 
+            // Generic workout/training session if no template_id
+            template = {
+              id: session.id,
+              name: session.type || 'Training Session'
             };
           }
 
           sessionId = session.id;
-          scheduledTime = session.start_time || session.scheduled_time;
-          
-          // Determine completion status
-          if (workoutSession) {
-            completed = workoutSession.completed || false;
-          } else if (trainingSession) {
-            completed = trainingSession.status === 'completed';
-            missed = trainingSession.status === 'no_show';
-          }
+          scheduledTime = session.scheduled_time;
 
-          // Check if session is missed (past date and not completed)
-          const sessionDate = new Date(dateString);
-          const now = new Date();
-          if (sessionDate < now && !completed) {
+          // Determine completion status based on session.status
+          if (session.status === 'completed') {
+            completed = true;
+          } else if (session.status === 'no_show' || session.status === 'cancelled') {
             missed = true;
+          } else {
+            // Check if session is missed (past date and not completed)
+            const sessionDate = new Date(dateString);
+            const now = new Date();
+            if (sessionDate < now && session.status === 'scheduled') {
+              missed = true;
+            }
           }
         }
 
@@ -216,9 +169,11 @@ export default function CoachingClientView() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await refreshData();
-    await loadWorkoutTemplates();
-    await loadWeeklyWorkouts();
+    await refreshData(); // Refresh data from useTodayDataNew
+    await loadWorkoutTemplates(); // Reload templates
+    if (data?.profile?.id) {
+      await loadWeeklyWorkouts(data.profile.id); // Reload weekly workouts
+    }
     setRefreshing(false);
   };
 
@@ -233,24 +188,24 @@ export default function CoachingClientView() {
     }
 
     console.log('handleDayPress: workout:', workout);
-    
-    if (workout.completed) {
-      // Navigate to workout detail/history
-      if (workout.sessionId) {
+
+    if (workout.sessionId) {
+      if (workout.completed) {
+        // Navigate to workout detail/history
+        router.push(`/workout-detail/${workout.sessionId}`);
+      } else if (workout.missed) {
+        // Show missed workout detail
         router.push(`/workout-detail/${workout.sessionId}`);
       } else {
-        router.push(`/workout-detail/${workout.template.id}`);
-      }
-    } else if (workout.missed) {
-      // Show missed workout detail
-      router.push(`/workout-detail/${workout.template.id}`);
-    } else {
-      // Navigate to start workout
-      if (workout.sessionId) {
+        // Navigate to start workout
         router.push(`/start-workout/${workout.sessionId}`);
-      } else {
-        router.push(`/start-workout/${workout.template.id}`);
       }
+    } else {
+      console.log('No session ID found for this workout.');
+      // Fallback for templates without a direct session (e.g., if template was just created)
+      // This part might need adjustment based on how you want to handle templates vs. actual sessions
+      // For now, if no sessionId, we can't start a specific session.
+      Alert.alert('Info', 'No specific session found to start or view details for this workout.');
     }
   };
 
@@ -264,7 +219,7 @@ export default function CoachingClientView() {
     } else if (date.toDateString() === yesterday.toDateString()) {
       return 'Yesterday';
     } else {
-      return date.toLocaleDateString('en-US', { 
+      return date.toLocaleDateString('en-US', {
         weekday: 'long',
         month: 'short',
         day: 'numeric'
@@ -278,7 +233,7 @@ export default function CoachingClientView() {
 
   const renderWeeklyCalendar = () => (
     <View style={styles.calendarSection}>
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.calendarHeader}
         onPress={handleTrainingCalendarPress}
         activeOpacity={0.7}
@@ -286,7 +241,7 @@ export default function CoachingClientView() {
         <Text style={styles.calendarTitle}>Training (this week)</Text>
         <ChevronRight size={20} color={colors.textSecondary} />
       </TouchableOpacity>
-      
+
       {loadingWeekly ? (
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Loading workouts...</Text>
@@ -336,7 +291,7 @@ export default function CoachingClientView() {
               </TouchableOpacity>
             ))}
           </View>
-          
+
           <Text style={styles.weekSummary}>
             You have {getWorkoutCount()} workouts this week!
           </Text>
@@ -360,7 +315,7 @@ export default function CoachingClientView() {
           <Text style={styles.macrosDescription}>
             Start by setting your daily goal
           </Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.macrosButton}
             onPress={() => router.push('/food-journal')}
           >
@@ -404,11 +359,11 @@ export default function CoachingClientView() {
             <Text style={styles.cardTitle}>Your Progress</Text>
             <Trophy size={24} color={colors.warning} />
           </View>
-          
+
           <Text style={styles.achievementSummary}>
             You've unlocked 1 out of 3 achievements. Keep going!
           </Text>
-          
+
           <View style={styles.achievementProgressBar}>
             <View style={[styles.achievementProgress, { width: '33.33%' }]} />
           </View>
@@ -416,23 +371,23 @@ export default function CoachingClientView() {
 
         {/* Achievement List */}
         <Text style={styles.sectionTitle}>Achievements</Text>
-        
+
         {achievements.map((achievement, index) => (
           <View key={index} style={styles.achievementCard}>
             <View style={styles.achievementIcon}>
               <Text style={styles.achievementEmoji}>{achievement.icon}</Text>
             </View>
-            
+
             <View style={styles.achievementInfo}>
               <Text style={styles.achievementName}>{achievement.name}</Text>
               <Text style={styles.achievementProgressText}>
-                {achievement.completed 
-                  ? 'Completed!' 
+                {achievement.completed
+                  ? 'Completed!'
                   : `${achievement.progress}/${achievement.name === '7-Day Streak' ? 7 : achievement.name === '100 Workouts' ? 100 : 1}`
                 }
               </Text>
             </View>
-            
+
             {achievement.completed && (
               <View style={styles.completedBadge}>
                 <Text style={styles.completedText}>✓</Text>
@@ -492,8 +447,8 @@ export default function CoachingClientView() {
         </View>
       </View>
 
-      <ScrollView 
-        style={styles.scrollView} 
+      <ScrollView
+        style={styles.scrollView}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
@@ -520,14 +475,14 @@ export default function CoachingClientView() {
                   <Text style={styles.cardTitle}>Your Team</Text>
                   <Users size={24} color={colors.info} />
                 </View>
-                
+
                 {data.clientAssignment.trainer && (
                   <View style={styles.teamMember}>
                     <Text style={styles.teamMemberRole}>Trainer</Text>
                     <Text style={styles.teamMemberName}>{data.clientAssignment.trainer.full_name}</Text>
                   </View>
                 )}
-                
+
                 {data.clientAssignment.nutritionist && (
                   <View style={styles.teamMember}>
                     <Text style={styles.teamMemberRole}>Nutritionist</Text>

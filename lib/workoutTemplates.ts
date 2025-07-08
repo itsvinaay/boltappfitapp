@@ -1,46 +1,62 @@
 import { supabase } from './supabase';
-import { WorkoutTemplate } from '@/types/workout';
+import { WorkoutTemplate, TemplateExercise, Exercise, WorkoutSet } from '@/types/workout';
 
-export interface WorkoutTemplate {
-  id: string;
-  name: string;
-  description?: string;
-  category: string;
-  duration: number;
-  exercises: any[];
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-  is_public: boolean;
-}
-
-// Get all workout templates
-export const getWorkoutTemplates = async (): Promise<WorkoutTemplate[]> => {
+export async function getWorkoutTemplates(): Promise<WorkoutTemplate[]> {
   try {
     const { data, error } = await supabase
       .from('workout_templates')
-      .select('*')
-      .order('created_at', { ascending: false });
+      .select(`
+        *,
+        exercises:template_exercises(
+          order_index,
+          sets_config,
+          notes,
+          exercise:exercise_id(*)
+        )
+      `)
+      .order('name', { ascending: true });
 
     if (error) {
       console.error('Error fetching workout templates:', error);
       return [];
     }
 
-    return data || [];
+    // Map the data to the WorkoutTemplate interface, ensuring exercises are correctly structured
+    const templates: WorkoutTemplate[] = data.map((template: any) => ({
+      ...template,
+      exercises: template.exercises.map((te: any) => ({
+        id: te.exercise.id, // Use exercise ID as the template exercise ID for simplicity
+        template_id: template.id,
+        exercise_id: te.exercise.id,
+        exercise: te.exercise,
+        order_index: te.order_index,
+        sets_config: te.sets_config,
+        notes: te.notes,
+        created_at: te.created_at, // Assuming created_at is part of template_exercises
+      })).sort((a: TemplateExercise, b: TemplateExercise) => a.order_index - b.order_index),
+    }));
+
+    return templates;
   } catch (error) {
-    console.error('Error in getWorkoutTemplates:', error);
+    console.error('Exception fetching workout templates:', error);
     return [];
   }
-};
+}
 
-// Get a specific workout template by ID
-export const getWorkoutTemplate = async (id: string): Promise<WorkoutTemplate | null> => {
+export async function getWorkoutTemplate(templateId: string): Promise<WorkoutTemplate | null> {
   try {
     const { data, error } = await supabase
       .from('workout_templates')
-      .select('*')
-      .eq('id', id)
+      .select(`
+        *,
+        exercises:template_exercises(
+          order_index,
+          sets_config,
+          notes,
+          exercise:exercise_id(*)
+        )
+      `)
+      .eq('id', templateId)
       .single();
 
     if (error) {
@@ -48,260 +64,166 @@ export const getWorkoutTemplate = async (id: string): Promise<WorkoutTemplate | 
       return null;
     }
 
-    return data;
+    if (!data) return null;
+
+    // Map the data to the WorkoutTemplate interface
+    const template: WorkoutTemplate = {
+      ...data,
+      exercises: data.exercises.map((te: any) => ({
+        id: te.exercise.id, // Use exercise ID as the template exercise ID for simplicity
+        template_id: data.id,
+        exercise_id: te.exercise.id,
+        exercise: te.exercise,
+        order_index: te.order_index,
+        sets_config: te.sets_config,
+        notes: te.notes,
+        created_at: te.created_at,
+      })).sort((a: TemplateExercise, b: TemplateExercise) => a.order_index - b.order_index),
+    };
+
+    return template;
   } catch (error) {
-    console.error('Error in getWorkoutTemplate:', error);
+    console.error('Exception fetching workout template:', error);
     return null;
   }
-};
+}
 
-// Create a new workout template
-export const createWorkoutTemplate = async (template: Omit<WorkoutTemplate, 'id' | 'created_at' | 'updated_at'>): Promise<WorkoutTemplate | null> => {
+export async function initializeDefaultTemplates(): Promise<void> {
   try {
-    const { data, error } = await supabase
+    // Check if any templates exist
+    const { count, error: countError } = await supabase
       .from('workout_templates')
-      .insert({
-        ...template,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
+      .select('*', { count: 'exact', head: true });
 
-    if (error) {
-      console.error('Error creating workout template:', error);
-      return null;
-    }
-
-    return data;
-  } catch (error) {
-    console.error('Error in createWorkoutTemplate:', error);
-    return null;
-  }
-};
-
-// Update a workout template
-export const updateWorkoutTemplate = async (id: string, updates: Partial<WorkoutTemplate>): Promise<WorkoutTemplate | null> => {
-  try {
-    const { data, error } = await supabase
-      .from('workout_templates')
-      .update({
-        ...updates,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error updating workout template:', error);
-      return null;
-    }
-
-    return data;
-  } catch (error) {
-    console.error('Error in updateWorkoutTemplate:', error);
-    return null;
-  }
-};
-
-// Delete a workout template
-export const deleteWorkoutTemplate = async (id: string): Promise<boolean> => {
-  try {
-    const { error } = await supabase
-      .from('workout_templates')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error deleting workout template:', error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Error in deleteWorkoutTemplate:', error);
-    return false;
-  }
-};
-
-// Initialize default workout templates
-export const initializeDefaultTemplates = async (): Promise<void> => {
-  try {
-    // Check if templates already exist
-    const { data: existingTemplates } = await supabase
-      .from('workout_templates')
-      .select('id')
-      .limit(1);
-
-    if (existingTemplates && existingTemplates.length > 0) {
-      console.log('Workout templates already exist');
+    if (countError) {
+      console.error('Error checking for existing templates:', countError);
       return;
     }
 
-    // Create default templates
+    if (count && count > 0) {
+      console.log('Default workout templates already exist. Skipping initialization.');
+      return;
+    }
+
+    console.log('Initializing default workout templates...');
+
+    // Fetch the system user ID (assuming 'admin' role is used for system-created templates)
+    const { data: systemProfile, error: profileError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'admin')
+      .single();
+
+    const createdBy = systemProfile?.id || 'system'; // Fallback to 'system' if no admin profile found
+
+    // Define default exercises first
+    const defaultExercisesData = [
+      { name: 'Push-ups', category: 'Bodyweight', muscle_groups: ['Chest', 'Shoulders', 'Triceps'], instructions: 'Start in plank position, lower body to ground, push back up', equipment: 'None', is_public: true },
+      { name: 'Squats', category: 'Bodyweight', muscle_groups: ['Quadriceps', 'Glutes', 'Hamstrings'], instructions: 'Stand with feet shoulder-width apart, lower hips back and down', equipment: 'None', is_public: true },
+      { name: 'Bench Press', category: 'Strength', muscle_groups: ['Chest', 'Shoulders', 'Triceps'], instructions: 'Lie on bench, lower bar to chest, press up', equipment: 'Barbell, Bench', is_public: true },
+      { name: 'Deadlift', category: 'Strength', muscle_groups: ['Hamstrings', 'Glutes', 'Back'], instructions: 'Stand with feet hip-width apart, lift bar from ground', equipment: 'Barbell', is_public: true },
+      { name: 'Pull-ups', category: 'Bodyweight', muscle_groups: ['Back', 'Biceps'], instructions: 'Hang from bar, pull body up until chin over bar', equipment: 'Pull-up bar', is_public: true },
+      { name: 'Plank', 'category': 'Core', 'muscle_groups': ['Core', 'Shoulders'], 'instructions': 'Hold plank position with straight body line', 'equipment': 'None', 'is_public': true },
+      { name: 'Lunges', 'category': 'Bodyweight', 'muscle_groups': ['Quadriceps', 'Glutes', 'Hamstrings'], 'instructions': 'Step forward into lunge position, alternate legs', 'equipment': 'None', 'is_public': true },
+      { name: 'Burpees', 'category': 'HIIT', 'muscle_groups': ['Full Body'], 'instructions': 'Squat down, jump back to plank, jump forward, jump up', 'equipment': 'None', 'is_public': true }
+    ];
+
+    const { data: insertedExercises, error: insertExerciseError } = await supabase
+      .from('exercises')
+      .insert(defaultExercisesData)
+      .select();
+
+    if (insertExerciseError) {
+      console.error('Error inserting default exercises:', insertExerciseError);
+      return;
+    }
+
+    const exercisesMap = new Map<string, string>();
+    insertedExercises.forEach((ex: Exercise) => exercisesMap.set(ex.name, ex.id));
+
     const defaultTemplates = [
       {
         name: 'Upper Body Strength',
         description: 'Focus on building upper body strength with compound movements',
         category: 'Strength',
-        duration: 60,
-        exercises: [
-          {
-            id: 'ex-1',
-            name: 'Bench Press',
-            sets: [
-              { reps: 8, weight: 135, restTime: 120 },
-              { reps: 8, weight: 135, restTime: 120 },
-              { reps: 8, weight: 135, restTime: 120 }
-            ],
-            order: 1,
-            notes: 'Focus on controlled movement'
-          },
-          {
-            id: 'ex-2',
-            name: 'Pull-ups',
-            sets: [
-              { reps: 8, restTime: 90 },
-              { reps: 8, restTime: 90 },
-              { reps: 8, restTime: 90 }
-            ],
-            order: 2,
-            notes: 'Use assistance if needed'
-          }
-        ],
-        created_by: 'system',
-        is_public: true
+        estimated_duration_minutes: 60,
+        created_by: createdBy,
+        is_public: true,
+        exercises_config: [
+          { name: 'Bench Press', sets: [{ reps: 8, weight: 135, rest_time: 120 }, { reps: 8, weight: 135, rest_time: 120 }, { reps: 8, weight: 135, rest_time: 120 }], notes: 'Focus on controlled movement' },
+          { name: 'Pull-ups', sets: [{ reps: 8, rest_time: 90 }, { reps: 8, rest_time: 90 }, { reps: 8, rest_time: 90 }], notes: 'Use assistance if needed' }
+        ]
       },
       {
         name: 'Lower Body Power',
         description: 'Build explosive lower body strength and power',
         category: 'Strength',
-        duration: 45,
-        exercises: [
-          {
-            id: 'ex-3',
-            name: 'Squats',
-            sets: [
-              { reps: 12, weight: 185, restTime: 120 },
-              { reps: 10, weight: 205, restTime: 120 },
-              { reps: 8, weight: 225, restTime: 120 }
-            ],
-            order: 1,
-            notes: 'Progressive overload'
-          },
-          {
-            id: 'ex-4',
-            name: 'Deadlift',
-            sets: [
-              { reps: 5, weight: 275, restTime: 180 },
-              { reps: 5, weight: 275, restTime: 180 },
-              { reps: 5, weight: 275, restTime: 180 }
-            ],
-            order: 2,
-            notes: 'Focus on form over weight'
-          }
-        ],
-        created_by: 'system',
-        is_public: true
+        estimated_duration_minutes: 45,
+        created_by: createdBy,
+        is_public: true,
+        exercises_config: [
+          { name: 'Squats', sets: [{ reps: 12, weight: 185, rest_time: 120 }, { reps: 10, weight: 205, rest_time: 120 }, { reps: 8, weight: 225, rest_time: 120 }], notes: 'Progressive overload' },
+          { name: 'Deadlift', sets: [{ reps: 5, weight: 275, rest_time: 180 }, { reps: 5, weight: 275, rest_time: 180 }, { reps: 5, weight: 275, rest_time: 180 }], notes: 'Focus on form over weight' }
+        ]
       },
       {
         name: 'HIIT Cardio Blast',
         description: 'High-intensity interval training for cardiovascular fitness',
         category: 'Cardio',
-        duration: 30,
-        exercises: [
-          {
-            id: 'ex-5',
-            name: 'Push-ups',
-            sets: [
-              { reps: 15, restTime: 30 },
-              { reps: 15, restTime: 30 },
-              { reps: 15, restTime: 30 },
-              { reps: 15, restTime: 30 }
-            ],
-            order: 1,
-            notes: 'High intensity, short rest'
-          },
-          {
-            id: 'ex-6',
-            name: 'Squats',
-            sets: [
-              { reps: 20, restTime: 30 },
-              { reps: 20, restTime: 30 },
-              { reps: 20, restTime: 30 },
-              { reps: 20, restTime: 30 }
-            ],
-            order: 2,
-            notes: 'Explosive movement'
-          }
-        ],
-        created_by: 'system',
-        is_public: true
+        estimated_duration_minutes: 30,
+        created_by: createdBy,
+        is_public: true,
+        exercises_config: [
+          { name: 'Burpees', sets: [{ reps: 10, rest_time: 30 }, { reps: 10, rest_time: 30 }, { reps: 10, rest_time: 30 }, { reps: 10, rest_time: 30 }], notes: 'High intensity, short rest' },
+          { name: 'Plank', sets: [{ duration: 60, rest_time: 30 }, { duration: 60, rest_time: 30 }, { duration: 60, rest_time: 30 }], notes: 'Hold strong core' }
+        ]
       },
       {
         name: 'Full Body Functional',
         description: 'Functional movements for everyday strength',
         category: 'Functional',
-        duration: 50,
-        exercises: [
-          {
-            id: 'ex-7',
-            name: 'Push-ups',
-            sets: [
-              { reps: 12, restTime: 60 },
-              { reps: 12, restTime: 60 },
-              { reps: 12, restTime: 60 }
-            ],
-            order: 1,
-            notes: 'Maintain proper form'
-          },
-          {
-            id: 'ex-8',
-            name: 'Squats',
-            sets: [
-              { reps: 15, restTime: 60 },
-              { reps: 15, restTime: 60 },
-              { reps: 15, restTime: 60 }
-            ],
-            order: 2,
-            notes: 'Full range of motion'
-          },
-          {
-            id: 'ex-9',
-            name: 'Pull-ups',
-            sets: [
-              { reps: 6, restTime: 90 },
-              { reps: 6, restTime: 90 },
-              { reps: 6, restTime: 90 }
-            ],
-            order: 3,
-            notes: 'Assisted if necessary'
-          }
-        ],
-        created_by: 'system',
-        is_public: true
+        estimated_duration_minutes: 50,
+        created_by: createdBy,
+        is_public: true,
+        exercises_config: [
+          { name: 'Push-ups', sets: [{ reps: 12, rest_time: 60 }, { reps: 12, rest_time: 60 }, { reps: 12, rest_time: 60 }], notes: 'Maintain proper form' },
+          { name: 'Squats', sets: [{ reps: 15, rest_time: 60 }, { reps: 15, rest_time: 60 }, { reps: 15, rest_time: 60 }], notes: 'Full range of motion' },
+          { name: 'Pull-ups', sets: [{ reps: 6, rest_time: 90 }, { reps: 6, rest_time: 90 }, { reps: 6, rest_time: 90 }], notes: 'Assisted if necessary' }
+        ]
       }
     ];
 
-    // Insert templates one by one
-    for (const template of defaultTemplates) {
-      await createWorkoutTemplate(template);
+    for (const templateConfig of defaultTemplates) {
+      const { exercises_config, ...templateData } = templateConfig;
+      const { data: insertedTemplate, error: insertTemplateError } = await supabase
+        .from('workout_templates')
+        .insert(templateData)
+        .select()
+        .single();
+
+      if (insertTemplateError) {
+        console.error('Error inserting default template:', insertTemplateError);
+        continue;
+      }
+
+      const templateExercisesToInsert = exercises_config.map((exConfig: any, index: number) => ({
+        template_id: insertedTemplate.id,
+        exercise_id: exercisesMap.get(exConfig.name),
+        order_index: index,
+        sets_config: exConfig.sets,
+        notes: exConfig.notes,
+      }));
+
+      const { error: insertTemplateExercisesError } = await supabase
+        .from('template_exercises')
+        .insert(templateExercisesToInsert);
+
+      if (insertTemplateExercisesError) {
+        console.error('Error inserting default template exercises:', insertTemplateExercisesError);
+      }
     }
-
-    console.log('Default workout templates created successfully');
+    console.log('Default workout templates initialized successfully.');
   } catch (error) {
-    console.error('Error initializing default templates:', error);
+    console.error('Exception initializing default templates:', error);
   }
-};
-
-export async function fetchWorkoutTemplatesFromDB(): Promise<WorkoutTemplate[]> {
-  const { data, error } = await supabase
-    .from('workout_templates')
-    .select('*');
-  if (error) {
-    console.error('Error fetching workout templates from DB:', error);
-    return [];
-  }
-  return data as WorkoutTemplate[];
 }
