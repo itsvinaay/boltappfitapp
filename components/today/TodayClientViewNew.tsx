@@ -57,7 +57,7 @@ export default function TodayClientViewNew() {
     return 'Good Evening';
   };
 
-  const userName = clientData?.profile?.full_name?.split(' ')[0] || 'User';
+  const userName = typeof clientData?.profile?.full_name === 'string' && clientData.profile.full_name ? clientData.profile.full_name.split(' ')[0] : 'User';
   const steps = clientData?.todayStats?.steps || 0;
   const stepGoal = 10000;
   const stepProgress = (steps / stepGoal) * 100;

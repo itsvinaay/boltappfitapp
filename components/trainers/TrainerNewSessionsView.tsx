@@ -198,7 +198,7 @@ export default function TrainerNewSessionsView() {
         client_id: selectedClient.id,
         trainer_id: trainerId,
         session_type: sessionType,
-        session_date: selectedDate.toISOString().split('T')[0],
+        session_date: selectedDate && typeof selectedDate.toISOString === 'function' ? selectedDate.toISOString().split('T')[0] : '',
        scheduled_time: selectedTime.toTimeString().slice(0, 5),
         duration: parseInt(duration),
         location,

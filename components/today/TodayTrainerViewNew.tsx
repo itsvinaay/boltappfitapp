@@ -139,7 +139,7 @@ export default function TodayTrainerViewNew() {
   };
 
   const formatTime = (time: string) => {
-    const [hours, minutes] = time.split(':');
+    const [hours, minutes] = (typeof time === 'string' && time ? time.split(':') : ['00','00']);
     const hour = parseInt(hours);
     const ampm = hour >= 12 ? 'PM' : 'AM';
     const displayHour = hour % 12 || 12;

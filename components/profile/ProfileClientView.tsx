@@ -52,7 +52,7 @@ export default function ProfileClientView() {
   const [currentWeight] = useState(69.5);
   const [goalWeight] = useState(68);
 
-  const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User';
+  const displayName = user?.user_metadata?.full_name || (typeof user?.email === 'string' && user.email ? user.email.split('@')[0] : 'User');
 
   const handleLogout = () => {
     Alert.alert(
@@ -87,6 +87,14 @@ export default function ProfileClientView() {
       color: colors.primary,
       onPress: () => router.push('/activity-history'),
     },
+    {
+      id: 'my-plans',
+      title: 'My Workout Plans',
+      icon: Calendar,
+      color: colors.primary,
+      onPress: () => router.push('/my-plan'),
+    },
+
     {
       id: 'exercises',
       title: 'Your exercises',

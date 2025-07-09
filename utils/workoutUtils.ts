@@ -34,7 +34,7 @@ export const getPersonalRecord = (sessions: WorkoutSession[], exerciseId: string
   let maxReps = 0;
 
   sessions.forEach(session => {
-    const exercise = session.exercises.find(ex => ex.exerciseId === exerciseId);
+    const exercise = session.exercises.find(ex => ex.exercise_id === exerciseId);
     if (exercise) {
       exercise.sets.forEach(set => {
         if (set.weight && set.weight > maxWeight) {
@@ -68,7 +68,7 @@ export const getWeekDates = (startDate: Date): { [key in DayOfWeek]: string } =>
   days.forEach((day, index) => {
     const date = new Date(monday);
     date.setDate(monday.getDate() + index);
-    week[day] = date.toISOString().split('T')[0];
+    week[day] = date && typeof date.toISOString === 'function' ? date.toISOString().split('T')[0] : '';
   });
 
   return week;
@@ -111,9 +111,9 @@ export const getWeeklyStats = (sessions: WorkoutSession[]): {
   }, 0);
 
   const totalDuration = weeklySessions.reduce((total, session) => {
-    if (session.startTime && session.endTime) {
-      const start = new Date(`${session.date}T${session.startTime}`);
-      const end = new Date(`${session.date}T${session.endTime}`);
+    if (session.start_time && session.end_time) {
+      const start = new Date(`${session.date}T${session.start_time}`);
+      const end = new Date(`${session.date}T${session.end_time}`);
       return total + (end.getTime() - start.getTime()) / (1000 * 60); // minutes
     }
     return total;

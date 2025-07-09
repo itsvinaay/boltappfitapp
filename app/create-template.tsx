@@ -8,16 +8,19 @@ import {
   TextInput,
   Alert,
   Modal,
+  Image, // Import Image
+  Platform, // Import Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { 
-  ArrowLeft, 
-  Plus, 
+import {
+  ArrowLeft,
+  Plus,
   Search,
   X,
   ChevronDown,
   Trash2,
-  GripVertical
+  GripVertical,
+  Image as ImageIcon, // Renamed to avoid conflict with RN Image
 } from 'lucide-react-native';
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -25,10 +28,12 @@ import { WorkoutTemplate, Exercise, TemplateExercise } from '@/types/workout';
 import { getExercises } from '@/utils/storage';
 import { supabase } from '@/lib/supabase';
 import BottomSheet from '@/components/BottomSheet';
+import * as ImagePicker from 'expo-image-picker'; // Import ImagePicker
+import 'react-native-url-polyfill/auto'; // Required for Supabase Storage on React Native
 
 const templateCategories = [
   'Strength',
-  'Cardio', 
+  'Cardio',
   'Bodyweight',
   'HIIT',
   'Flexibility',
@@ -58,7 +63,8 @@ export default function CreateTemplateScreen() {
   const [selectedCategory, setSelectedCategory] = useState('');
   const [estimatedDuration, setEstimatedDuration] = useState('60');
   const [templateExercises, setTemplateExercises] = useState<TemplateExercise[]>([]);
-  
+  const [thumbnailImage, setThumbnailImage] = useState<string | null>(null); // New state for thumbnail
+
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [showExercisePicker, setShowExercisePicker] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
@@ -115,7 +121,7 @@ export default function CreateTemplateScreen() {
   const loadTemplate = async () => {
     try {
       const templateId = (edit || duplicate) as string;
-      
+
       // Fetch template from Supabase
       const { data: templateData, error: templateError } = await supabase
         .from('workout_templates')
@@ -142,53 +148,45 @@ export default function CreateTemplateScreen() {
           name: templateData.name,
           description: templateData.description,
           category: templateData.category,
-          duration: templateData.estimated_duration_minutes || 60,
+          estimated_duration_minutes: templateData.estimated_duration_minutes || 60,
+          created_by: templateData.created_by,
+          is_public: templateData.is_public,
+          created_at: templateData.created_at,
+          updated_at: templateData.updated_at,
           exercises: (templateData.template_exercises || []).map((te: any) => ({
             id: te.id,
-            exerciseId: te.exercise_id,
+            template_id: te.template_id,
+            exercise_id: te.exercise_id,
             exercise: {
               id: te.exercise?.id || '',
               name: te.exercise?.name || 'Unknown Exercise',
               category: te.exercise?.category || 'Unknown',
-              muscleGroups: te.exercise?.muscle_groups || [],
+              muscle_groups: te.exercise?.muscle_groups || [],
               instructions: te.exercise?.instructions,
-              equipment: te.exercise?.equipment
+              equipment: te.exercise?.equipment,
+              is_public: te.exercise?.is_public || false,
+              created_by: te.exercise?.created_by,
+              created_at: te.exercise?.created_at || '',
+              updated_at: te.exercise?.updated_at || '',
             },
-            sets: te.sets_config ? (() => {
-              try {
-                const parsed = typeof te.sets_config === 'string' ? JSON.parse(te.sets_config) : te.sets_config;
-                return Array.isArray(parsed) && parsed.length > 0 ? parsed : [
-                  { reps: 10, weight: 0, restTime: 60 },
-                  { reps: 10, weight: 0, restTime: 60 },
-                  { reps: 10, weight: 0, restTime: 60 },
-                ];
-              } catch (error) {
-                console.error('Error parsing sets_config:', error);
-                return [
-                  { reps: 10, weight: 0, restTime: 60 },
-                  { reps: 10, weight: 0, restTime: 60 },
-                  { reps: 10, weight: 0, restTime: 60 },
-                ];
-              }
-            })() : [
-              { reps: 10, weight: 0, restTime: 60 },
-              { reps: 10, weight: 0, restTime: 60 },
-              { reps: 10, weight: 0, restTime: 60 },
+            sets_config: te.sets_config ? (Array.isArray(te.sets_config) ? te.sets_config : (typeof te.sets_config === 'string' ? JSON.parse(te.sets_config) : [])) : [
+              { reps: 10, weight: 0, rest_time: 60 },
+              { reps: 10, weight: 0, rest_time: 60 },
+              { reps: 10, weight: 0, rest_time: 60 },
             ],
-            order: te.order_index,
-            notes: te.notes
+            order_index: te.order_index,
+            notes: te.notes,
+            created_at: te.created_at,
           })),
-          createdBy: templateData.created_by,
-          createdAt: templateData.created_at,
-          updatedAt: templateData.updated_at,
-          isPublic: templateData.is_public
+          thumbnail_url: templateData.thumbnail_url || null,
         };
 
         setTemplateName(isDuplicating ? `${template.name} (Copy)` : template.name);
         setTemplateDescription(template.description || '');
         setSelectedCategory(template.category);
-        setEstimatedDuration(template.duration.toString());
+        setEstimatedDuration(template.estimated_duration_minutes.toString());
         setTemplateExercises(template.exercises);
+        setThumbnailImage(template.thumbnail_url || null); // Set thumbnail image
       }
     } catch (error) {
       console.error('Error loading template:', error);
@@ -199,16 +197,18 @@ export default function CreateTemplateScreen() {
   const handleAddExercise = (exercise: Exercise) => {
     const templateExercise: TemplateExercise = {
       id: generateUUID(),
-      exerciseId: exercise.id,
+      template_id: '', // Will be set on save
+      exercise_id: exercise.id,
       exercise,
-      sets: [
-        { reps: 10, weight: 0, restTime: 60 },
-        { reps: 10, weight: 0, restTime: 60 },
-        { reps: 10, weight: 0, restTime: 60 },
+      sets_config: [
+        { reps: 10, weight: 0, rest_time: 60 },
+        { reps: 10, weight: 0, rest_time: 60 },
+        { reps: 10, weight: 0, rest_time: 60 },
       ],
-      order: templateExercises.length,
+      order_index: templateExercises.length,
+      notes: '',
+      created_at: new Date().toISOString(),
     };
-
     setTemplateExercises(prev => [...prev, templateExercise]);
     setShowExercisePicker(false);
     setSearchQuery('');
@@ -258,13 +258,13 @@ export default function CreateTemplateScreen() {
         .select('id')
         .eq('user_id', user.id)
         .single();
-      
+
       if (profileError || !profileData) {
         Alert.alert('Error', 'User profile not found');
         setLoading(false);
         return;
       }
-      
+
       const templateId = isEditing ? (edit as string) : generateUUID();
       // Insert or update workout_templates
       const templateData = {
@@ -275,6 +275,7 @@ export default function CreateTemplateScreen() {
         estimated_duration_minutes: parseInt(estimatedDuration) || 60,
         created_by: profileData.id,
         is_public: false,
+        thumbnail_url: thumbnailImage, // Save image_url
       };
       let templateResult;
       if (isEditing) {
@@ -309,9 +310,9 @@ export default function CreateTemplateScreen() {
         const teData = {
           id: te.id || generateUUID(),
           template_id: templateId,
-          exercise_id: te.exercise.id,
+          exercise_id: te.exercise_id,
           order_index: i,
-          sets_config: JSON.stringify(te.sets),
+          sets_config: JSON.stringify(te.sets_config),
           notes: te.notes || null,
         };
         const { error: teError } = await supabase
@@ -337,7 +338,7 @@ export default function CreateTemplateScreen() {
   const filteredExercises = exercises.filter(exercise =>
     exercise.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     exercise.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (exercise.muscleGroups || []).some(mg => mg.toLowerCase().includes(searchQuery.toLowerCase()))
+    (exercise.muscle_groups || []).some((mg: string) => mg.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   const renderExerciseCard = (templateExercise: TemplateExercise, index: number) => {
@@ -348,7 +349,7 @@ export default function CreateTemplateScreen() {
             <Text style={styles.exerciseName}>{templateExercise.exercise.name}</Text>
             <Text style={styles.exerciseCategory}>{templateExercise.exercise.category}</Text>
             <Text style={styles.exerciseMuscles}>
-              {(templateExercise.exercise.muscleGroups || []).join(', ')}
+              {(templateExercise.exercise.muscle_groups || []).join(', ')}
             </Text>
           </View>
           <TouchableOpacity
@@ -360,7 +361,7 @@ export default function CreateTemplateScreen() {
         </View>
         <View style={styles.setsInfo}>
           <Text style={styles.setsText}>
-            {templateExercise.sets.length} sets • {templateExercise.sets[0]?.reps || 0} reps each
+            {(templateExercise.sets_config || []).length} sets • {(templateExercise.sets_config || [])[0]?.reps || 0} reps each
           </Text>
         </View>
       </View>
@@ -392,7 +393,7 @@ export default function CreateTemplateScreen() {
         {/* Template Information */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Template Information</Text>
-          
+
           <View style={styles.formField}>
             <Text style={styles.fieldLabel}>Template Name *</Text>
             <TextInput
@@ -415,6 +416,21 @@ export default function CreateTemplateScreen() {
               multiline
               numberOfLines={3}
             />
+          </View>
+
+          {/* Thumbnail Image Upload */}
+          <View style={styles.formField}>
+            <Text style={styles.fieldLabel}>Thumbnail Image URL</Text>
+            <TextInput
+              style={styles.textInput}
+              value={thumbnailImage || ''}
+              onChangeText={setThumbnailImage}
+              placeholder="Enter image URL (https://...)"
+              placeholderTextColor={colors.textTertiary}
+            />
+            {thumbnailImage ? (
+              <Image source={{ uri: thumbnailImage }} style={styles.thumbnailPreview} />
+            ) : null}
           </View>
 
           <View style={styles.formRow}>
@@ -451,7 +467,7 @@ export default function CreateTemplateScreen() {
         {/* Exercises */}
         <View style={styles.section}>
           <View style={styles.exercisesHeader}>
-            <Text style={styles.sectionTitle}>Exercises ({templateExercises.length})</Text>
+            <Text style={styles.sectionTitle}>Exercises {(templateExercises || []).length}</Text>
             <TouchableOpacity
               style={styles.addExerciseButton}
               onPress={() => setShowExercisePicker(true)}
@@ -463,7 +479,7 @@ export default function CreateTemplateScreen() {
 
 
 
-          {templateExercises.length === 0 ? (
+          {(templateExercises || []).length === 0 ? (
             <View style={styles.emptyExercises}>
               <Text style={styles.emptyExercisesText}>No exercises added yet</Text>
               <TouchableOpacity
@@ -474,7 +490,7 @@ export default function CreateTemplateScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            templateExercises.map(renderExerciseCard)
+            (templateExercises || []).map(renderExerciseCard)
           )}
         </View>
 
@@ -495,7 +511,7 @@ export default function CreateTemplateScreen() {
               <X size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
-          
+
           <ScrollView style={styles.categoryList}>
             {templateCategories.map((category) => (
               <TouchableOpacity
@@ -532,7 +548,7 @@ export default function CreateTemplateScreen() {
         colors={colors}
         snapPoints={[0.7, 0.95]}
       >
-        
+
         {/* Search */}
         <View style={styles.searchContainer}>
           <Search size={20} color={colors.textTertiary} style={styles.searchIcon} />
@@ -572,7 +588,7 @@ export default function CreateTemplateScreen() {
                   <Text style={styles.exerciseOptionName}>{exercise.name}</Text>
                   <Text style={styles.exerciseOptionCategory}>{exercise.category}</Text>
                   <Text style={styles.exerciseOptionMuscles}>
-                    {(exercise.muscleGroups || []).join(', ')}
+                    {(exercise.muscle_groups || []).join(', ')}
                   </Text>
                 </View>
                 <Plus size={20} color={colors.primary} />
@@ -676,6 +692,32 @@ const createStyles = (colors: any) => StyleSheet.create({
     paddingVertical: 12,
     minHeight: 80,
     textAlignVertical: 'top',
+  },
+  imagePickerButton: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    height: 150,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  imagePickerPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imagePickerText: {
+    fontFamily: 'Inter-Medium',
+    fontSize: 14,
+    color: colors.textTertiary,
+    marginTop: 8,
+  },
+  thumbnailPreview: {
+    width: '100%',
+    height: 100, // Fixed height for preview
+    borderRadius: 8,
+    marginTop: 8,
   },
   picker: {
     flexDirection: 'row',

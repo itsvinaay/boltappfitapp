@@ -38,7 +38,7 @@ export default function TodayNutritionistViewWithData() {
     }).toUpperCase();
   };
 
-  const userName = profile?.full_name?.split(' ')[0] || 'Nutritionist';
+  const userName = typeof profile?.full_name === 'string' && profile.full_name ? profile.full_name.split(' ')[0] : 'Nutritionist';
   const todaysConsultations = consultations.length;
   const completedConsultations = consultations.filter(c => c.status === 'completed').length;
   const activeClients = clients.length;

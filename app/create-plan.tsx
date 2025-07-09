@@ -40,18 +40,13 @@ import {
   createSampleClientAssignment,
   ClientProfile,
   WorkoutTemplateForPlan,
-  WorkoutPlan,
 } from '@/lib/planDatabase';
 
 type ScheduleType = 'weekly' | 'monthly' | 'custom';
 type DayOfWeek = 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
 
-interface WeeklySchedule {
-  [key in DayOfWeek]: string | null;
-}
-
 interface MonthlySchedule {
-  [weekNumber: number]: WeeklySchedule;
+  [weekNumber: number]: Record<DayOfWeek, string | null>;
 }
 
 interface CustomWorkout {
@@ -80,7 +75,7 @@ export default function CreatePlanScreen() {
   });
 
   // Schedule data
-  const [weeklySchedule, setWeeklySchedule] = useState<WeeklySchedule>({
+  const [weeklySchedule, setWeeklySchedule] = useState<Record<DayOfWeek, string | null>>({
     Monday: null,
     Tuesday: null,
     Wednesday: null,
@@ -292,7 +287,7 @@ export default function CreatePlanScreen() {
         schedule_data: getScheduleData(),
       };
 
-      let savedPlan: WorkoutPlan | null = null;
+      let savedPlan: any | null = null; // Changed WorkoutPlan to any as WorkoutPlan is not exported
 
       if (isEditing && typeof edit === 'string') {
         savedPlan = await updateWorkoutPlan(edit, planData);
@@ -333,7 +328,7 @@ export default function CreatePlanScreen() {
     }
   };
 
-  const generatePlanSessions = async (plan: WorkoutPlan) => {
+  const generatePlanSessions = async (plan: any) => { // Changed WorkoutPlan to any
     try {
       // Delete existing sessions if updating
       if (isEditing) {
@@ -364,7 +359,7 @@ export default function CreatePlanScreen() {
     }
   };
 
-  const generateWeeklySessions = (sessions: any[], start: Date, end: Date, schedule: WeeklySchedule, planId: string) => {
+  const generateWeeklySessions = (sessions: any[], start: Date, end: Date, schedule: Record<DayOfWeek, string | null>, planId: string) => {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const current = new Date(start);
 

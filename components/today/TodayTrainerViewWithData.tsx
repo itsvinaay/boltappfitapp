@@ -38,7 +38,7 @@ export default function TodayTrainerViewWithData() {
     }).toUpperCase();
   };
 
-  const userName = profile?.full_name?.split(' ')[0] || 'Trainer';
+  const userName = typeof profile?.full_name === 'string' && profile.full_name ? profile.full_name.split(' ')[0] : 'Trainer';
   const todaysSessions = trainingSessions.length;
   const completedSessions = trainingSessions.filter(s => s.status === 'completed').length;
   const activeClients = clients.length;

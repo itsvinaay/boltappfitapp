@@ -13,9 +13,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { 
-  ArrowLeft, 
-  Plus, 
+import {
+  ArrowLeft,
+  Plus,
   X,
   ChevronDown,
   Trash2,
@@ -34,7 +34,7 @@ import { supabase } from '@/lib/supabase';
 
 const defaultCategories = [
   'Strength',
-  'Cardio', 
+  'Cardio',
   'Bodyweight',
   'HIIT',
   'Flexibility',
@@ -105,32 +105,34 @@ export default function CreateExerciseScreen() {
   const [selectedEquipment, setSelectedEquipment] = useState('');
   const [instructions, setInstructions] = useState('');
   const [difficulty, setDifficulty] = useState<'Beginner' | 'Intermediate' | 'Advanced'>('Beginner');
-  
+  const [videoUrl, setVideoUrl] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+
   // Custom options
   const [categories, setCategories] = useState<string[]>(defaultCategories);
   const [muscleGroups, setMuscleGroups] = useState<string[]>(defaultMuscleGroups);
   const [equipment, setEquipment] = useState<string[]>(defaultEquipment);
-  
+
   // Sets configuration
   const [setTemplates, setSetTemplates] = useState<SetTemplate[]>([
     { id: generateId(), reps: 10, weight: 0, restTime: 60 },
     { id: generateId(), reps: 10, weight: 0, restTime: 60 },
     { id: generateId(), reps: 10, weight: 0, restTime: 60 },
   ]);
-  
+
   // Modal states
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showMuscleGroupModal, setShowMuscleGroupModal] = useState(false);
   const [showEquipmentModal, setShowEquipmentModal] = useState(false);
   const [showSetConfigModal, setShowSetConfigModal] = useState(false);
-  
+
   // Form states
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newMuscleGroupName, setNewMuscleGroupName] = useState('');
   const [newEquipmentName, setNewEquipmentName] = useState('');
   const [editingSetId, setEditingSetId] = useState<string | null>(null);
   const [tempSet, setTempSet] = useState<SetTemplate | null>(null);
-  
+
   const [loading, setLoading] = useState(false);
   const [isTimeBased, setIsTimeBased] = useState(false);
 
@@ -147,9 +149,9 @@ export default function CreateExerciseScreen() {
     try {
       setLoading(true);
       const exerciseId = (edit || duplicate) as string;
-      
+
       console.log('Loading exercise with ID:', exerciseId);
-      
+
       const { data: exerciseData, error: exerciseError } = await supabase
         .from('exercises')
         .select('*')
@@ -157,7 +159,7 @@ export default function CreateExerciseScreen() {
         .single();
 
       console.log('Exercise data:', exerciseData, 'Error:', exerciseError);
-      
+
       if (exerciseError || !exerciseData) {
         Alert.alert('Error', 'Failed to load exercise');
         return;
@@ -169,7 +171,9 @@ export default function CreateExerciseScreen() {
       setSelectedEquipment(exerciseData.equipment || '');
       setInstructions(exerciseData.instructions || '');
       setDifficulty(exerciseData.difficulty_level || 'Beginner');
-      
+      setVideoUrl(exerciseData.video_url || '');
+      setImageUrl(exerciseData.image_url || '');
+
     } catch (error) {
       console.error('Error loading exercise:', error);
       Alert.alert('Error', 'Failed to load exercise');
@@ -179,7 +183,7 @@ export default function CreateExerciseScreen() {
   };
 
   const handleMuscleGroupToggle = (muscleGroup: string) => {
-    setSelectedMuscleGroups(prev => 
+    setSelectedMuscleGroups(prev =>
       prev.includes(muscleGroup)
         ? prev.filter(mg => mg !== muscleGroup)
         : [...prev, muscleGroup]
@@ -239,7 +243,7 @@ export default function CreateExerciseScreen() {
 
   const handleSaveSet = () => {
     if (tempSet && editingSetId) {
-      setSetTemplates(prev => prev.map(set => 
+      setSetTemplates(prev => prev.map(set =>
         set.id === editingSetId ? tempSet : set
       ));
       setShowSetConfigModal(false);
@@ -298,6 +302,8 @@ export default function CreateExerciseScreen() {
         difficulty_level: difficulty.toLowerCase(),
         created_by: profileData.id, // Use profile UUID
         is_public: false,
+        video_url: videoUrl.trim() || null,
+        image_url: imageUrl.trim() || null,
       };
 
       console.log('Saving exercise:', exerciseData);
@@ -354,14 +360,14 @@ export default function CreateExerciseScreen() {
           </Text>
         </View>
         <View style={styles.setTemplateActions}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.setActionButton}
             onPress={() => handleEditSet(set)}
           >
             <Edit3 size={16} color={colors.primary} />
           </TouchableOpacity>
           {setTemplates.length > 1 && (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.setActionButton}
               onPress={() => handleRemoveSet(set.id)}
             >
@@ -399,7 +405,7 @@ export default function CreateExerciseScreen() {
         {/* Exercise Information */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Exercise Information</Text>
-          
+
           <View style={styles.formField}>
             <Text style={styles.fieldLabel}>Exercise Name *</Text>
             <TextInput
@@ -448,6 +454,32 @@ export default function CreateExerciseScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+
+          <View style={styles.formField}>
+            <Text style={styles.fieldLabel}>YouTube Video URL (Optional)</Text>
+            <TextInput
+              style={styles.textInput}
+              value={videoUrl}
+              onChangeText={setVideoUrl}
+              placeholder="e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+              placeholderTextColor={colors.textTertiary}
+              keyboardType="url"
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={styles.formField}>
+            <Text style={styles.fieldLabel}>Thumbnail Image URL (Optional)</Text>
+            <TextInput
+              style={styles.textInput}
+              value={imageUrl}
+              onChangeText={setImageUrl}
+              placeholder="e.g., https://images.pexels.com/photos/1552242/pexels-photo-1552242.jpeg"
+              placeholderTextColor={colors.textTertiary}
+              keyboardType="url"
+              autoCapitalize="none"
+            />
           </View>
         </View>
 
@@ -547,7 +579,7 @@ export default function CreateExerciseScreen() {
           <Text style={styles.sectionSubtitle}>
             Configure default sets for this exercise. Users can modify these when creating workouts.
           </Text>
-          
+
           <View style={styles.setTemplatesContainer}>
             {setTemplates.map(renderSetTemplate)}
           </View>
@@ -586,7 +618,7 @@ export default function CreateExerciseScreen() {
               <X size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
-          
+
           <View style={styles.modalContent}>
             <View style={styles.addNewSection}>
               <Text style={styles.addNewTitle}>Add New Category</Text>
@@ -654,7 +686,7 @@ export default function CreateExerciseScreen() {
               <X size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
-          
+
           <View style={styles.modalContent}>
             <View style={styles.addNewSection}>
               <Text style={styles.addNewTitle}>Add New Muscle Group</Text>
@@ -719,7 +751,7 @@ export default function CreateExerciseScreen() {
               <X size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
-          
+
           <View style={styles.modalContent}>
             <View style={styles.addNewSection}>
               <Text style={styles.addNewTitle}>Add New Equipment</Text>
@@ -790,7 +822,7 @@ export default function CreateExerciseScreen() {
               <Save size={24} color={colors.primary} />
             </TouchableOpacity>
           </View>
-          
+
           {tempSet && (
             <View style={styles.modalContent}>
               <View style={styles.setConfigGrid}>

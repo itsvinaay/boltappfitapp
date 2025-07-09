@@ -38,11 +38,11 @@ export function UserProvider({ children }: UserProviderProps) {
             const newRole = (profile.role as UserRole) || 'client';
             if (userRole && userRole !== newRole) {
               setUserRole(newRole);
-              setUserName(profile.full_name || user.email?.split('@')[0] || 'User');
+              setUserName(typeof profile.full_name === 'string' && profile.full_name ? profile.full_name : (typeof user.email === 'string' && user.email ? user.email.split('@')[0] : 'User'));
               // Use a navigation effect in the tab layout instead of here
             } else {
               setUserRole(newRole);
-              setUserName(profile.full_name || user.email?.split('@')[0] || 'User');
+              setUserName(typeof profile.full_name === 'string' && profile.full_name ? profile.full_name : (typeof user.email === 'string' && user.email ? user.email.split('@')[0] : 'User'));
             }
             return;
           }
@@ -51,7 +51,7 @@ export function UserProvider({ children }: UserProviderProps) {
         }
         const role = user.user_metadata?.role || 'client';
         setUserRole(role as UserRole);
-        const name = user.user_metadata?.full_name || user.email?.split('@')[0] || 'User';
+        const name = typeof user.user_metadata?.full_name === 'string' && user.user_metadata?.full_name ? user.user_metadata.full_name : (typeof user.email === 'string' && user.email ? user.email.split('@')[0] : 'User');
         setUserName(name);
       } else {
         setUserRole(null);

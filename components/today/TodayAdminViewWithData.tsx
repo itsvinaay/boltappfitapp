@@ -42,7 +42,7 @@ export default function TodayAdminViewWithData() {
     }).toUpperCase();
   };
 
-  const userName = profile?.full_name?.split(' ')[0] || 'Admin';
+  const userName = typeof profile?.full_name === 'string' && profile.full_name ? profile.full_name.split(' ')[0] : 'Admin';
   const totalUsers = systemStats?.totalUsers || 0;
   const totalClients = systemStats?.totalClients || 0;
   const systemHealth = systemStats?.systemHealth || 98.5;

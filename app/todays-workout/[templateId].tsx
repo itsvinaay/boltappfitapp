@@ -22,10 +22,18 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColorScheme, getColors } from '../../hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
-import { WorkoutTemplate } from '@/types/workout';
+import { WorkoutTemplate, Exercise } from '@/types/workout'; // Import Exercise interface
 import { getWorkoutTemplateById } from '@/lib/planDatabase';
 
 const { width, height } = Dimensions.get('window');
+
+// Extend the ExerciseWithDetails interface to include video_url
+interface ExerciseWithDetails extends Exercise {
+  sets: number;
+  reps: string;
+  image: string;
+  video_url?: string; // Added video_url property
+}
 
 export default function TodaysWorkoutScreen() {
   const colorScheme = useColorScheme();
@@ -35,6 +43,7 @@ export default function TodaysWorkoutScreen() {
 
   const [workout, setWorkout] = useState<WorkoutTemplate | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exercises, setExercises] = useState<ExerciseWithDetails[]>([]); // Use the extended interface
 
   useEffect(() => {
     loadWorkout();
@@ -43,7 +52,18 @@ export default function TodaysWorkoutScreen() {
   const loadWorkout = async () => {
     try {
       const template = await getWorkoutTemplateById(templateId as string);
-      setWorkout(template);
+      if (template) {
+        setWorkout(template);
+        // Map exercises and add a placeholder video URL
+        const exercisesWithDetails: ExerciseWithDetails[] = template.exercises.map((templateExercise, index) => ({
+          ...templateExercise.exercise,
+          sets: templateExercise.sets.length,
+          reps: templateExercise.sets.map(set => set.reps).filter(Boolean).join(', ') || '',
+          image: getExerciseImage(templateExercise.exercise.name, index),
+          video_url: 'https://www.w3schools.com/html/mov_bbb.mp4', // Placeholder video URL
+        }));
+        setExercises(exercisesWithDetails);
+      }
     } catch (error) {
       console.error('Error loading workout:', error);
     } finally {
@@ -80,25 +100,32 @@ export default function TodaysWorkoutScreen() {
     </View>
   );
 
-  const renderExerciseItem = (exercise: any, index: number) => (
-    <TouchableOpacity key={exercise.id} style={styles.exerciseItem}>
+  const renderExerciseItem = (exercise: ExerciseWithDetails, index: number) => (
+    <TouchableOpacity 
+      key={exercise.id} 
+      style={styles.exerciseItem}
+      onPress={() => router.push({
+        pathname: `/exercise-video/${exercise.id}`,
+        params: { videoUrl: exercise.video_url, exerciseName: exercise.name }
+      })}
+    >
       <View style={styles.exerciseImageContainer}>
-        <Image source={{ uri: getExerciseImage(exercise.exercise.name, index) }} style={styles.exerciseImage} />
+        <Image source={{ uri: exercise.image }} style={styles.exerciseImage} />
         <View style={styles.exercisePlayButton}>
           <Play size={16} color="#FFFFFF" />
         </View>
       </View>
       
       <View style={styles.exerciseInfo}>
-        <Text style={styles.exerciseName}>{exercise.exercise.name}</Text>
+        <Text style={styles.exerciseName}>{exercise.name}</Text>
         <Text style={styles.exerciseDetails}>
-          {exercise.sets.map(set => set.reps).join(', ')} reps
+          {exercise.reps} reps
         </Text>
-        <Text style={styles.exerciseCategory}>{exercise.exercise.category}</Text>
+        <Text style={styles.exerciseCategory}>{exercise.category}</Text>
       </View>
       
       <View style={styles.exerciseSets}>
-        <Text style={styles.exerciseSetCount}>x{exercise.sets.length}</Text>
+        <Text style={styles.exerciseSetCount}>x{exercise.sets}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -118,6 +145,9 @@ export default function TodaysWorkoutScreen() {
       <SafeAreaView style={styles.container}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Workout not found</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -160,7 +190,7 @@ export default function TodaysWorkoutScreen() {
               <View style={styles.heroMeta}>
                 <View style={styles.heroMetaItem}>
                   <Dumbbell size={16} color="rgba(255, 255, 255, 0.8)" />
-                  <Text style={styles.heroMetaText}>{workout.exercises.length} exercises</Text>
+                  <Text style={styles.heroMetaText}>{exercises.length} exercises</Text>
                 </View>
                 <View style={styles.heroMetaItem}>
                   <Clock size={16} color="rgba(255, 255, 255, 0.8)" />
@@ -213,7 +243,7 @@ export default function TodaysWorkoutScreen() {
         {/* Main Workout Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Main Workout</Text>
-          {workout.exercises.map(renderExerciseItem)}
+          {exercises.map(renderExerciseItem)}
         </View>
 
         {/* Cool Down Section */}
@@ -275,6 +305,11 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontFamily: 'Inter-SemiBold',
     fontSize: 18,
     color: colors.text,
+  },
+  backButtonText: {
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 16,
+    color: '#FFFFFF',
   },
   heroSection: {
     height: height * 0.5,
@@ -508,12 +543,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontFamily: 'Inter-Regular',
     fontSize: 14,
     color: colors.textSecondary,
-    marginBottom: 4,
-  },
-  exerciseCategory: {
-    fontFamily: 'Inter-Medium',
-    fontSize: 12,
-    color: colors.primary,
   },
   exerciseSets: {
     alignItems: 'center',
@@ -601,3 +630,4 @@ const createStyles = (colors: any) => StyleSheet.create({
     marginLeft: 8,
   },
 });
+

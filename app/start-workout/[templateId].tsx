@@ -31,6 +31,7 @@ import { generateId } from '@/utils/workoutUtils';
 import { getWorkoutTemplatesForPlans, getWorkoutTemplateById, getTemplateExercisesByTemplateId } from '@/lib/planDatabase';
 import { saveSession } from '@/utils/storage';
 import { supabase } from '@/lib/supabase';
+import YouTubePlayer from '@/components/ui/YouTubePlayer';
 
 interface ActiveSet extends WorkoutSet {
   id: string;
@@ -47,7 +48,7 @@ interface ActiveExercise {
 
 export default function StartWorkoutScreen() {
   const colorScheme = useColorScheme();
-  const colors = getColors(colorScheme);
+  const colors = getColors((colorScheme as 'light' | 'dark' | null));
   const styles = createStyles(colors);
   const { templateId } = useLocalSearchParams();
 
@@ -77,9 +78,10 @@ export default function StartWorkoutScreen() {
 
   useEffect(() => {
     if (isWorkoutStarted && !isPaused) {
+      if (workoutTimerRef.current) clearInterval(workoutTimerRef.current);
       workoutTimerRef.current = setInterval(() => {
-        setWorkoutTime(prev => prev + 1);
-      }, 1000);
+        setWorkoutTime((prev: number) => prev + 1);
+      }, 1000) as unknown as NodeJS.Timeout;
     } else {
       if (workoutTimerRef.current) {
         clearInterval(workoutTimerRef.current);
@@ -94,8 +96,9 @@ export default function StartWorkoutScreen() {
 
   useEffect(() => {
     if (isResting && restTime > 0) {
+      if (restTimerRef.current) clearInterval(restTimerRef.current);
       restTimerRef.current = setInterval(() => {
-        setRestTime(prev => {
+        setRestTime((prev: number) => {
           if (prev <= 1) {
             setIsResting(false);
             setShowRestTimer(false);
@@ -103,7 +106,7 @@ export default function StartWorkoutScreen() {
           }
           return prev - 1;
         });
-      }, 1000);
+      }, 1000) as unknown as NodeJS.Timeout;
     } else {
       if (restTimerRef.current) {
         clearInterval(restTimerRef.current);
@@ -162,31 +165,43 @@ export default function StartWorkoutScreen() {
       setExercises([]);
       return;
     }
-    const activeExercises: ActiveExercise[] = template.exercises.map(templateExercise => ({
-      exerciseId: templateExercise.exercise?.id || '',
-      exerciseName: templateExercise.exercise?.name || 'Unknown',
-      sets: Array.isArray(templateExercise.sets_config) ? templateExercise.sets_config.map((set: any) => ({
-        id: generateId(),
-        reps: set.reps,
-        weight: set.weight,
-        duration: set.duration,
-        restTime: set.restTime,
-        completed: false,
-        notes: '',
-      })) : [],
-      currentSetIndex: 0,
-      notes: templateExercise.notes || '',
-    }));
+    const activeExercises: ActiveExercise[] = template.exercises.map(templateExercise => {
+      let setsConfig = templateExercise.sets_config;
+      if (typeof setsConfig === 'string') {
+        try {
+          setsConfig = JSON.parse(setsConfig);
+        } catch {
+          setsConfig = [];
+        }
+      }
+      return {
+        exerciseId: templateExercise.exercise?.id || '',
+        exerciseName: templateExercise.exercise?.name || 'Unknown',
+        sets: Array.isArray(setsConfig)
+          ? setsConfig.map((set: any) => ({
+              id: generateId(),
+              reps: set.reps,
+              weight: set.weight,
+              duration: set.duration,
+              rest_time: set.rest_time,
+              completed: false,
+              notes: '',
+            }))
+          : [],
+        currentSetIndex: 0,
+        notes: templateExercise.notes || '',
+      };
+    });
     setExercises(activeExercises);
   };
 
   const initializeWorkoutSession = (template: WorkoutTemplate) => {
     const session: WorkoutSession = {
       id: generateId(),
-      clientId: 'current-user', // TODO: Get from user context
-      templateId: template.id,
+      client_id: 'current-user', // TODO: Get from user context
+      template_id: template.id,
       date: new Date().toISOString().split('T')[0],
-      startTime: new Date().toISOString(),
+      start_time: new Date().toISOString(),
       exercises: [],
       completed: false,
       synced: false,
@@ -219,7 +234,7 @@ export default function StartWorkoutScreen() {
     });
 
     // Start rest timer if specified
-    const restTimeSeconds = updatedSet.restTime || exercises[exerciseIndex].sets[setIndex].restTime;
+    const restTimeSeconds = updatedSet.rest_time || exercises[exerciseIndex].sets[setIndex].rest_time;
     if (restTimeSeconds && restTimeSeconds > 0) {
       setRestTime(restTimeSeconds);
       setIsResting(true);
@@ -256,15 +271,15 @@ export default function StartWorkoutScreen() {
     try {
       const completedSession: WorkoutSession = {
         ...workoutSession,
-        endTime: new Date().toISOString(),
+        end_time: new Date().toISOString(),
         exercises: exercises.map(exercise => ({
-          exerciseId: exercise.exerciseId,
+          exercise_id: exercise.exerciseId,
           sets: exercise.sets.map(set => ({
             id: set.id,
             reps: set.reps,
             weight: set.weight,
             duration: set.duration,
-            restTime: set.restTime,
+            rest_time: set.rest_time,
             completed: set.completed,
             notes: set.notes,
           })),
@@ -361,10 +376,10 @@ export default function StartWorkoutScreen() {
             <Text style={styles.inputLabel}>Rest</Text>
             <TextInput
               style={[styles.setInput, isCompleted && styles.completedInput]}
-              value={set.restTime?.toString() || ''}
+              value={set.rest_time?.toString() || ''}
               onChangeText={(value) => {
                 const updatedExercises = [...exercises];
-                updatedExercises[currentExerciseIndex].sets[setIndex].restTime = parseInt(value) || 0;
+                updatedExercises[currentExerciseIndex].sets[setIndex].rest_time = parseInt(value) || 0;
                 setExercises(updatedExercises);
               }}
               keyboardType="numeric"
@@ -467,6 +482,11 @@ export default function StartWorkoutScreen() {
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Current Exercise */}
         <View style={styles.exerciseCard}>
+          {console.log('Current Exercise Data:', template.exercises[currentExerciseIndex])}
+          {/* Show YouTube video if available */}
+          {currentExercise && template.exercises && template.exercises[currentExerciseIndex]?.exercise?.video_url ? (
+            <YouTubePlayer video_url={template.exercises[currentExerciseIndex].exercise.video_url} />
+          ) : null}
           <Text style={styles.exerciseName}>{currentExercise.exerciseName}</Text>
           
           <View style={styles.setsContainer}>
