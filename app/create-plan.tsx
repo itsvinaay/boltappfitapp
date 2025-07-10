@@ -41,9 +41,13 @@ import {
   ClientProfile,
   WorkoutTemplateForPlan,
 } from '@/lib/planDatabase';
+import { WorkoutPlan } from '@/types/workout';
+import { supabase } from '@/lib/supabase';
 
 type ScheduleType = 'weekly' | 'monthly' | 'custom';
 type DayOfWeek = 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday' | 'Sunday';
+
+type WeeklySchedule = Record<DayOfWeek, string | null>;
 
 interface MonthlySchedule {
   [weekNumber: number]: Record<DayOfWeek, string | null>;
@@ -57,7 +61,7 @@ interface CustomWorkout {
 }
 
 export default function CreatePlanScreen() {
-  const colorScheme = useColorScheme();
+  const colorScheme = useColorScheme() ?? 'light';
   const colors = getColors(colorScheme);
   const styles = createStyles(colors);
   const { edit } = useLocalSearchParams();
@@ -75,7 +79,7 @@ export default function CreatePlanScreen() {
   });
 
   // Schedule data
-  const [weeklySchedule, setWeeklySchedule] = useState<Record<DayOfWeek, string | null>>({
+  const [weeklySchedule, setWeeklySchedule] = useState<WeeklySchedule>({
     Monday: null,
     Tuesday: null,
     Wednesday: null,
@@ -97,6 +101,7 @@ export default function CreatePlanScreen() {
   const [templates, setTemplates] = useState<WorkoutTemplateForPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [trainerProfileId, setTrainerProfileId] = useState<string | null>(null);
 
   // Modal state
   const [showClientPicker, setShowClientPicker] = useState(false);
@@ -126,6 +131,18 @@ export default function CreatePlanScreen() {
     try {
       setLoading(true);
       console.log('🔄 Loading initial data...');
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('user_id', user.id)
+          .single();
+        if (profile) {
+          setTrainerProfileId(profile.id);
+        }
+      }
       
       // Load clients and templates in parallel
       const [clientsData, templatesData] = await Promise.all([
@@ -279,15 +296,17 @@ export default function CreatePlanScreen() {
 
       const planData = {
         client_id: selectedClient.id,
+        trainer_id: trainerProfileId,
         name: planName.trim(),
         description: planDescription.trim() || undefined,
         start_date: startDate.toISOString().split('T')[0],
         end_date: endDate.toISOString().split('T')[0],
         schedule_type: scheduleType,
         schedule_data: getScheduleData(),
+        status: 'active',
       };
 
-      let savedPlan: any | null = null; // Changed WorkoutPlan to any as WorkoutPlan is not exported
+      let savedPlan: WorkoutPlan | null = null;
 
       if (isEditing && typeof edit === 'string') {
         savedPlan = await updateWorkoutPlan(edit, planData);
@@ -328,7 +347,7 @@ export default function CreatePlanScreen() {
     }
   };
 
-  const generatePlanSessions = async (plan: any) => { // Changed WorkoutPlan to any
+  const generatePlanSessions = async (plan: WorkoutPlan) => {
     try {
       // Delete existing sessions if updating
       if (isEditing) {
@@ -352,14 +371,45 @@ export default function CreatePlanScreen() {
       }
 
       if (sessions.length > 0) {
+        // 1) Save sessions to plan_sessions (used for plan editing & reporting)
         await createPlanSessions(sessions);
+
+        // 2) ALSO mirror the same rows into the training_sessions table so that
+        //    the client dashboard (which queries training_sessions) can see them.
+        //    We build the minimal fields required by training_sessions.
+        try {
+          const trainingSessionRows = sessions.map(s => ({
+            client_id: plan.client_id,
+            trainer_id: plan.trainer_id,
+            template_id: s.template_id ?? null,
+            plan_id: plan.id,
+            scheduled_date: (s.scheduled_date instanceof Date ? s.scheduled_date.toISOString().split('T')[0] : s.scheduled_date),
+            scheduled_time: null,
+            duration: 0,
+            session_type: 'workout',
+            status: s.status, // scheduled
+            session_data: {},
+            completion_data: {},
+          }));
+
+          if (trainingSessionRows.length > 0) {
+            const { error } = await supabase
+              .from('training_sessions')
+              .insert(trainingSessionRows);
+            if (error) {
+              console.error('Error mirroring sessions into training_sessions:', error);
+            }
+          }
+        } catch (mirrorErr) {
+          console.error('Unexpected error while mirroring training sessions:', mirrorErr);
+        }
       }
     } catch (error) {
       console.error('Error generating plan sessions:', error);
     }
   };
 
-  const generateWeeklySessions = (sessions: any[], start: Date, end: Date, schedule: Record<DayOfWeek, string | null>, planId: string) => {
+  const generateWeeklySessions = (sessions: any[], start: Date, end: Date, schedule: WeeklySchedule, planId: string) => {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const current = new Date(start);
 

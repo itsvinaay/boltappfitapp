@@ -24,8 +24,9 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
-import { WorkoutTemplate, Exercise } from '@/types/workout';
+import { WorkoutTemplate, Exercise, TrainingSession, WorkoutSet } from '@/types/workout';
 import { getWorkoutTemplateById } from '@/lib/planDatabase';
+import { supabase } from '@/lib/supabase';
 
 const { width, height } = Dimensions.get('window');
 
@@ -52,9 +53,134 @@ export default function WorkoutDetailScreen() {
 
   const loadWorkoutDetails = async () => {
     try {
-      console.log('workoutId:', workoutId);
-      const workoutTemplate = await getWorkoutTemplateById(workoutId as string);
-      console.log('workoutTemplate:', workoutTemplate);
+      console.log('🔍 Loading workout details for ID:', workoutId);
+      
+      if (!workoutId) {
+        const errorMsg = 'No workout ID provided';
+        console.error('❌ ' + errorMsg);
+        Alert.alert('Error', 'Invalid workout reference. Please try again.');
+        router.back();
+        setLoading(false);
+        return;
+      }
+
+      // Handle case where workoutId is a template ID (starts with 'template-')
+      if (typeof workoutId === 'string' && workoutId.startsWith('template-')) {
+        const templateId = workoutId.replace('template-', '');
+        const { data: template, error: templateError } = await supabase
+          .from('workout_templates')
+          .select('*')
+          .eq('id', templateId)
+          .maybeSingle();
+        
+        if (templateError || !template) {
+          console.error('❌ Error loading template:', {
+            error: templateError,
+            templateId,
+            timestamp: new Date().toISOString()
+          });
+          Alert.alert('Error', 'Failed to load workout template. Please try again later.');
+          router.back();
+          setLoading(false);
+          return;
+        }
+        
+        // Get exercises for this template
+        const { data: templateExercises, error: templateExercisesError } = await supabase
+          .from('template_exercises')
+          .select(`
+            *,
+            exercise:exercises(*)
+          `)
+          .eq('template_id', templateId)
+          .order('order_index', { ascending: true });
+        
+        if (templateExercisesError) {
+          console.error('❌ Error loading template exercises:', {
+            error: templateExercisesError,
+            templateId,
+            timestamp: new Date().toISOString()
+          });
+          Alert.alert('Error', 'Failed to load workout template exercises. Please try again later.');
+          router.back();
+          setLoading(false);
+          return;
+        }
+        
+        const workoutTemplate: WorkoutTemplate = {
+          ...template,
+          exercises: (templateExercises || []).map((te: any) => ({
+            id: te.id,
+            template_id: templateId,
+            exercise_id: te.exercise.id,
+            exercise: te.exercise,
+            order_index: te.order_index,
+            sets_config: te.sets_config,
+            notes: te.notes,
+            created_at: te.created_at
+          }))
+        };
+        
+        setWorkout(workoutTemplate);
+        setExercises(workoutTemplate.exercises.map((ex, idx) => ({
+          ...ex.exercise,
+          sets: 3, // Default value, adjust as needed
+          reps: '8-12', // Default value, adjust as needed
+          image: getExerciseImage(ex.exercise.name, idx),
+        })));
+        return;
+      }
+      
+      // Handle case where workoutId is a training session ID
+      let workoutTemplate = await getWorkoutTemplateById(workoutId as string);
+      if (!workoutTemplate) {
+        // Fallback: maybe workoutId refers to a training session; fetch and construct minimal template
+        const { data: session, error: sessionError } = await supabase
+          .from('training_sessions')
+          .select('*, workout_templates(*)')
+          .eq('id', workoutId as string)
+          .maybeSingle();
+        
+        if (sessionError) {
+          console.error('❌ Error loading training session:', {
+            error: sessionError,
+            workoutId,
+            timestamp: new Date().toISOString()
+          });
+          Alert.alert('Error', 'Failed to load workout. Please try again later.');
+          router.back();
+          setLoading(false);
+          return;
+        }
+        
+        if (!session) {
+          console.error('❌ Workout not found:', {
+            workoutId,
+            timestamp: new Date().toISOString()
+          });
+          Alert.alert('Error', 'Workout not found. Please try again later.');
+          router.back();
+          setLoading(false);
+          return;
+        }
+        
+        if (session.workout_templates) {
+          workoutTemplate = session.workout_templates as WorkoutTemplate;
+        } else {
+          // construct simple template placeholder
+          workoutTemplate = {
+            id: session.id,
+            name: session.session_type ?? 'Workout',
+            description: session.notes ?? '',
+            duration_minutes: session.duration ?? 0,
+            exercises: [],
+            equipment: [],
+            created_at: session.created_at ?? '',
+            updated_at: session.updated_at ?? ''
+          } as unknown as WorkoutTemplate;
+        }
+      }
+
       if (workoutTemplate) {
         setWorkout(workoutTemplate);
         
@@ -62,14 +188,21 @@ export default function WorkoutDetailScreen() {
         const exercisesWithDetails: ExerciseWithDetails[] = workoutTemplate.exercises.map((templateExercise, index) => ({
           ...templateExercise.exercise,
           sets: templateExercise.sets.length,
-          reps: templateExercise.sets.map(set => set.reps).join(', '),
+          reps: templateExercise.sets.map((set: WorkoutSet) => set.reps).join(', '),
           image: getExerciseImage(templateExercise.exercise.name, index),
         }));
         
         setExercises(exercisesWithDetails);
       }
     } catch (error) {
-      console.error('Error loading workout details:', error);
+      console.error('❌ Unexpected error in loadWorkoutDetails:', {
+        error,
+        workoutId,
+        timestamp: new Date().toISOString(),
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      Alert.alert('Error', 'An unexpected error occurred while loading workout details. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -136,9 +269,10 @@ export default function WorkoutDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Loading workout...</Text>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.text }]}>Loading workout details...</Text>
         </View>
       </SafeAreaView>
     );
@@ -146,9 +280,21 @@ export default function WorkoutDetailScreen() {
 
   if (!workout) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>Workout not found</Text>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.emptyContainer}>
+          <View style={styles.emptyIcon}>
+            <Dumbbell size={48} color={colors.text} />
+          </View>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>Workout Not Found</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+            The workout you're looking for doesn't exist or has been removed.
+          </Text>
+          <TouchableOpacity 
+            style={[styles.emptyButton, { backgroundColor: colors.primary }]}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.emptyButtonText}>Go Back</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -156,8 +302,24 @@ export default function WorkoutDetailScreen() {
 
   const equipment = ['Barbell', 'Cable Machine', 'Dumbbell'];
 
+  if (exercises.length === 0) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.emptyContainer}>
+          <View style={styles.emptyIcon}>
+            <Dumbbell size={48} color={colors.text} />
+          </View>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No Exercises Found</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+            This workout doesn't have any exercises yet.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Hero Section with Background Image */}
       <View style={styles.heroSection}>
         <Image 
@@ -296,6 +458,49 @@ export default function WorkoutDetailScreen() {
 }
 
 const createStyles = (colors: any) => StyleSheet.create({
+  // Existing styles...
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  emptyIcon: {
+    marginBottom: 16,
+    opacity: 0.5,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 24,
+    opacity: 0.8,
+  },
+  emptyButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  emptyButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.background,

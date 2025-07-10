@@ -14,14 +14,13 @@ import { ArrowLeft, Calendar, Clock, User, CreditCard as Edit3, Trash2, Copy, Pl
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
 import { WorkoutPlan, Client, DayOfWeek } from '@/types/workout';
-import { getWorkoutPlan, getTrainerClients, getWorkoutTemplatesForPlans, getPlanSessionsForClient } from '@/lib/planDatabase';
-import { createTrainingSession as createTrainingSessionApi } from '@/lib/trainingSessionQueries';
+import { getWorkoutPlan, getTrainerClients, getWorkoutTemplatesForPlans } from '@/lib/planDatabase';
 
 const daysOfWeek: DayOfWeek[] = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export default function PlanDetailsScreen() {
   const colorScheme = useColorScheme();
-  const colors = getColors(colorScheme ?? null);
+  const colors = getColors(colorScheme);
   const styles = createStyles(colors);
   const { id } = useLocalSearchParams();
 
@@ -31,11 +30,9 @@ export default function PlanDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [showNotesModal, setShowNotesModal] = useState(false);
   const [notes, setNotes] = useState('');
-  const [planSessions, setPlanSessions] = useState<any[]>([]);
 
   useEffect(() => {
     loadPlanDetails();
-    loadPlanSessions();
   }, [id]);
 
   const loadPlanDetails = async () => {
@@ -45,16 +42,14 @@ export default function PlanDetailsScreen() {
         // Map DB fields to UI fields for WorkoutPlan
         const mappedPlan = {
           id: planData.id,
-          client_id: planData.client_id,
-          trainer_id: planData.trainer_id,
+          clientId: planData.client_id,
+          trainerId: planData.trainer_id,
           name: planData.name,
-          start_date: planData.start_date,
-          end_date: planData.end_date,
-          schedule_data: planData.schedule_data,
-          schedule_type: planData.schedule_type,
-          status: planData.status,
-          created_at: planData.created_at,
-          updated_at: planData.updated_at,
+          startDate: planData.start_date,
+          endDate: planData.end_date,
+          schedule: planData.schedule_data,
+          createdAt: planData.created_at,
+          updatedAt: planData.updated_at,
         };
         setPlan(mappedPlan);
 
@@ -68,6 +63,7 @@ export default function PlanDetailsScreen() {
                 email: clientData.email,
                 avatar: clientData.avatar,
                 joinDate: clientData.created_at,
+                trainerId: clientData.trainer_id || '',
               }
             : null
         );
@@ -76,22 +72,12 @@ export default function PlanDetailsScreen() {
         const templatesData = await getWorkoutTemplatesForPlans();
         setTemplates(templatesData);
         console.log('Fetched templates:', templatesData);
-        console.log('Plan schedule:', mappedPlan.schedule_data);
+        console.log('Plan schedule:', mappedPlan.schedule);
       }
     } catch (error) {
       console.error('Error loading plan details:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadPlanSessions = async () => {
-    if (!id) return;
-    try {
-      const sessions = await getPlanSessionsForClient(id as string);
-      setPlanSessions(sessions);
-    } catch (error) {
-      console.error('Error loading plan sessions:', error);
     }
   };
 
@@ -106,9 +92,9 @@ export default function PlanDetailsScreen() {
     
     const today = new Date().toISOString().split('T')[0];
     
-    if (plan.end_date < today) {
+    if (plan.endDate < today) {
       return { status: 'Completed', color: colors.success };
-    } else if (plan.start_date > today) {
+    } else if (plan.startDate > today) {
       return { status: 'Upcoming', color: colors.warning };
     } else {
       return { status: 'Active', color: colors.primary };
@@ -116,10 +102,10 @@ export default function PlanDetailsScreen() {
   };
 
   const getDuration = (): string => {
-    if (!plan || !plan.start_date || !plan.end_date) return '';
+    if (!plan) return '';
     
-    const start = new Date(plan.start_date);
-    const end = new Date(plan.end_date);
+    const start = new Date(plan.startDate);
+    const end = new Date(plan.endDate);
     const diffTime = Math.abs(end.getTime() - start.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
@@ -136,7 +122,7 @@ export default function PlanDetailsScreen() {
 
   const getWorkoutsPerWeek = (): number => {
     if (!plan) return 0;
-    return Object.values(plan.schedule_data).filter(Boolean).length;
+    return Object.values(plan.schedule).filter(Boolean).length;
   };
 
   const handleEditPlan = () => {
@@ -166,31 +152,10 @@ export default function PlanDetailsScreen() {
     );
   };
 
-  const handleStartWorkout = async (day: DayOfWeek) => {
-    const templateId = plan?.schedule_data[day];
+  const handleStartWorkout = (day: DayOfWeek) => {
+    const templateId = plan?.schedule[day];
     if (templateId) {
-      try {
-        const session = await createTrainingSessionApi({
-          client_id: plan.client_id,
-          trainer_id: plan.trainer_id,
-          template_id: templateId,
-          plan_id: plan.id,
-          scheduled_date: (typeof plan.start_date === 'string' && plan.start_date ? plan.start_date.split('T')[0] : '') || new Date().toISOString().split('T')[0],
-          scheduled_time: null,
-          duration: 0,
-          session_type: 'workout',
-          status: 'scheduled',
-          session_data: {},
-          completion_data: {},
-        });
-        if (session && session.id) {
-          router.push(`/start-workout/${session.id}`);
-        } else {
-          Alert.alert('Error', 'Failed to create training session');
-        }
-      } catch (error) {
-        Alert.alert('Error', 'Failed to create training session');
-      }
+      router.push(`/start-workout/${templateId}`);
     }
   };
 
@@ -258,7 +223,7 @@ export default function PlanDetailsScreen() {
               <Text style={styles.planName}>{plan.name}</Text>
               <Text style={styles.clientName}>{client?.name || 'Unknown Client'}</Text>
               <Text style={styles.planDates}>
-                {plan.start_date ? new Date(plan.start_date).toLocaleDateString() : ''} - {plan.end_date ? new Date(plan.end_date).toLocaleDateString() : ''}
+                {new Date(plan.startDate).toLocaleDateString()} - {new Date(plan.endDate).toLocaleDateString()}
               </Text>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: color }]}>
@@ -292,7 +257,7 @@ export default function PlanDetailsScreen() {
           <Text style={styles.scheduleTitle}>Weekly Schedule</Text>
           
           {daysOfWeek.map((day) => {
-            const templateId = plan.schedule_data[day];
+            const templateId = plan.schedule[day];
             const hasWorkout = templateId !== null;
             
             return (
@@ -359,22 +324,6 @@ export default function PlanDetailsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Plan Sessions Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Plan Sessions</Text>
-          {planSessions.length === 0 ? (
-            <Text style={styles.emptyText}>No sessions scheduled for this plan.</Text>
-          ) : (
-            planSessions.map(session => (
-              <View key={session.id} style={styles.sessionRow}>
-                <Text style={styles.sessionDate}>{session.scheduled_date}</Text>
-                <Text style={styles.sessionTemplate}>{session.template?.name || 'Rest Day'}</Text>
-                <Text style={styles.sessionStatus}>{session.status}</Text>
-              </View>
-            ))
-          )}
-        </View>
-
         <View style={{ height: 100 }} />
       </ScrollView>
 
@@ -395,6 +344,7 @@ export default function PlanDetailsScreen() {
               <Save size={24} color={colors.primary} />
             </TouchableOpacity>
           </View>
+          
           <View style={styles.modalContent}>
             <Text style={styles.fieldLabel}>Notes for {plan.name}</Text>
             <TextInput
@@ -732,57 +682,5 @@ const createStyles = (colors: any) => StyleSheet.create({
   textArea: {
     minHeight: 120,
     textAlignVertical: 'top',
-  },
-  section: {
-    marginHorizontal: 20,
-    marginTop: 16,
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 20,
-    shadowColor: colors.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontFamily: 'Inter-SemiBold',
-    fontSize: 18,
-    color: colors.text,
-    marginBottom: 16,
-  },
-  sessionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
-  },
-  sessionDate: {
-    fontFamily: 'Inter-Regular',
-    fontSize: 14,
-    color: colors.textSecondary,
-    flex: 1,
-    marginRight: 10,
-  },
-  sessionTemplate: {
-    fontFamily: 'Inter-SemiBold',
-    fontSize: 14,
-    color: colors.text,
-    flex: 1,
-    marginRight: 10,
-  },
-  sessionStatus: {
-    fontFamily: 'Inter-SemiBold',
-    fontSize: 14,
-    color: colors.primary,
-  },
-  emptyText: {
-    fontFamily: 'Inter-Regular',
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    paddingVertical: 20,
   },
 });

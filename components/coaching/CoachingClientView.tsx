@@ -29,9 +29,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useColorScheme, getColors } from '../../hooks/useColorScheme';
 import { router } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTodayDataNew } from '../../hooks/useTodayDataNew';
 import { getWorkoutTemplates, initializeDefaultTemplates } from '../../lib/workoutTemplates';
+import { supabase } from '@/lib/supabase';
 import { getClientTrainingSessions } from '../../lib/trainingSessionQueries';
+import { TrainingSession } from '../../lib/database';
 
 const { width } = Dimensions.get('window');
 
@@ -67,6 +70,15 @@ export default function CoachingClientView() {
     }
   }, [data?.profile?.id, workoutTemplates]);
 
+  // Refresh weekly workouts every time the screen comes into focus (e.g., user navigates back after trainer edited plan)
+  useFocusEffect(
+    React.useCallback(() => {
+      if (data?.profile?.id) {
+        loadWeeklyWorkouts(data.profile.id);
+      }
+    }, [data?.profile?.id, workoutTemplates])
+  );
+
   const loadWorkoutTemplates = async () => {
     try {
       const templates = await getWorkoutTemplates();
@@ -96,14 +108,43 @@ export default function CoachingClientView() {
       const startDate = weekDates[0] && typeof weekDates[0].toISOString === 'function' ? weekDates[0].toISOString().split('T')[0] : '';
       const endDate = weekDates[6] && typeof weekDates[6].toISOString === 'function' ? weekDates[6].toISOString().split('T')[0] : '';
 
-      const trainingSessions = await getClientTrainingSessions(clientId, startDate, endDate);
+      let trainingSessions = await getClientTrainingSessions(clientId, startDate, endDate);
+
+      // Fallback: if no rows in training_sessions (e.g., mirroring failed), fetch from plan_sessions directly
+      if (trainingSessions.length === 0) {
+        const { data: planSessions, error } = await supabase
+          .from('plan_sessions')
+          .select('*, workout_templates(id, name), workout_plans!inner(client_id)')
+          .eq('workout_plans.client_id', clientId)
+          .gte('scheduled_date', startDate)
+          .lte('scheduled_date', endDate);
+        if (!error && planSessions) {
+          trainingSessions = planSessions.map((ps: any) => ({
+            id: ps.id,
+            client_id: clientId,
+            trainer_id: null,
+            template_id: ps.template_id,
+            plan_id: ps.plan_id,
+            scheduled_date: ps.scheduled_date,
+            scheduled_time: ps.scheduled_time ?? null,
+            duration: 0,
+            session_type: 'workout',
+            status: ps.status ?? 'scheduled',
+            session_data: {},
+            completion_data: {},
+          })).map(item => ({ ...item, created_at: item.scheduled_date, updated_at: item.scheduled_date })) as unknown as TrainingSession[];
+        }
+      }
 
       const dayNames = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
       const weeklyData: WeeklyWorkout[] = weekDates.map((date, index) => {
         const dateString = date && typeof date.toISOString === 'function' ? date.toISOString().split('T')[0] : '';
         const dayNumber = date.getDate();
 
-        const session = trainingSessions.find(s => s.scheduled_date === dateString);
+        const session = trainingSessions.find(s => {
+          const sDate = s.scheduled_date ? new Date(s.scheduled_date).toISOString().split('T')[0] : '';
+          return sDate === dateString;
+        });
 
         let template = null;
         let completed = false;
@@ -119,11 +160,6 @@ export default function CoachingClientView() {
             } else {
               template = { id: session.template_id, name: 'Workout' };
             }
-          } else {
-            template = {
-              id: session.id,
-              name: 'Training Session'
-            };
           }
 
           sessionId = session.id;
@@ -181,23 +217,35 @@ export default function CoachingClientView() {
       return;
     }
 
-    if (workout.template) {
-      if (workout.completed) {
-        router.push(`/workout-detail/${workout.template.id}`);
-      } else if (workout.missed) {
-        router.push(`/workout-detail/${workout.template.id}`);
-      } else {
-        router.push(`/start-workout/${workout.template.id}`);
-      }
-    } else if (workout.sessionId) {
-      // Fallback to sessionId if no template is available
+    // If we have a session ID, always use that for navigation
+    if (workout.sessionId) {
       if (workout.completed) {
         router.push(`/workout-detail/${workout.sessionId}`);
-      } else if (workout.missed) {
-        router.push(`/workout-detail/${workout.sessionId}`);
       } else {
-        router.push(`/start-workout/${workout.sessionId}`);
+        // For incomplete sessions, go to today's workout with the session ID
+        router.push(`/todays-workout/${workout.sessionId}`);
       }
+    } 
+    // If we only have a template ID (no session ID)
+    else if (workout.template) {
+      if (workout.completed) {
+        // For completed workouts, try to find a matching session first
+        const matchingSession = trainingSessions.find(
+          s => s.template_id === workout.template?.id && s.status === 'completed'
+        );
+        
+        if (matchingSession) {
+          // If we found a completed session, navigate to its detail
+          router.push(`/workout-detail/${matchingSession.id}`);
+        } else {
+          // Otherwise, navigate to the template detail
+          router.push(`/workout-detail/template-${workout.template.id}`);
+        }
+      }
+      // } else {
+      //   // For incomplete workouts, go to today's workout with the template ID
+      //   router.push(`/todays-workout/template-${workout.template.id}`);
+      // }
     } else {
       Alert.alert('Info', 'No specific session found to start or view details for this workout.');
     }

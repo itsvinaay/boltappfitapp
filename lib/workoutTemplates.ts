@@ -57,14 +57,14 @@ export async function getWorkoutTemplate(templateId: string): Promise<WorkoutTem
         )
       `)
       .eq('id', templateId)
-      .single();
+      .maybeSingle();
 
-    if (error) {
+    if (error && error.code !== 'PGRST116') {
       console.error('Error fetching workout template:', error);
+    }
+    if (!data) {
       return null;
     }
-
-    if (!data) return null;
 
     // Map the data to the WorkoutTemplate interface
     const template: WorkoutTemplate = {

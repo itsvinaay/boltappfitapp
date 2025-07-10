@@ -45,8 +45,8 @@ export async function getTrainerClients(): Promise<ClientProfile[]> {
       console.error('Error fetching trainer clients:', error);
       throw error;
     }
-
-    return data.map(assignment => assignment.profiles as ClientProfile);
+return data.map(assignment => assignment.profiles[0] as ClientProfile);
+    // return data.map(assignment => assignment.profiles as ClientProfile);
   } catch (error) {
     console.error('Error in getTrainerClients:', error);
     throw error;

@@ -14,6 +14,8 @@ export interface ClientProfile {
   id: string;
   full_name: string;
   email: string;
+  avatar?: string;
+  created_at?: string;
 }
 
 async function getCurrentUserProfileId(): Promise<string> {
@@ -47,7 +49,7 @@ export async function getTrainerClients(): Promise<ClientProfile[]> {
       throw error;
     }
 
-    return data.map(assignment => assignment.profiles as ClientProfile);
+    return data.map(assignment => (assignment.profiles as unknown) as ClientProfile);
   } catch (error) {
     console.error('Error in getTrainerClients:', error);
     throw error;
@@ -171,35 +173,6 @@ export async function deletePlanSessions(planId: string): Promise<void> {
   }
 }
 
-export async function getPlanSessionsForClient(clientId: string, startDate: string, endDate: string): Promise<PlanSession[]> {
-  try {
-    const { data, error } = await supabase
-      .from('plan_sessions')
-      .select(`
-        *,
-        workout_plans(client_id),
-        workout_templates(name, category, estimated_duration_minutes)
-      `)
-      .gte('scheduled_date', startDate)
-      .lte('scheduled_date', endDate)
-      .order('scheduled_date', { ascending: true });
-
-    if (error) {
-      console.error('Error fetching client plan sessions:', error);
-      throw error;
-    }
-
-    const filteredData = data.filter(session => session.workout_plans?.client_id === clientId);
-
-    return filteredData.map(session => ({
-      ...session,
-      template: session.workout_templates,
-    })) as PlanSession[];
-  } catch (error) {
-    console.error('Error in getPlanSessionsForClient:', error);
-    throw error;
-  }
-}
 
 export async function createSampleClientAssignment(): Promise<boolean> {
   try {
@@ -396,10 +369,12 @@ export async function getWorkoutTemplateById(id: string): Promise<any | null> {
         )
       `)
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
-    if (error) {
+    if (error && error.code !== 'PGRST116') {
       console.error('Error fetching workout template:', error);
+    }
+    if (!data) {
       return null;
     }
     return data;

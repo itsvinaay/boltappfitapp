@@ -199,7 +199,6 @@ export const getTrainerTrainingSessions = async (
       .from('training_sessions')
       .select('*')
       .eq('trainer_id', trainerId)
-      .eq('client_id', clientId)
       .order('scheduled_date', { ascending: true });
 
     if (startDate) {
@@ -258,6 +257,21 @@ export const createTrainingSession = async (
   sessionData: Omit<TrainingSession, 'id' | 'created_at' | 'updated_at'>
 ): Promise<TrainingSession | null> => {
   try {
+    // Make sure we have both client_id and trainer_id
+    if (!sessionData.client_id || !sessionData.trainer_id) {
+      console.error('Error creating training session: Missing client_id or trainer_id');
+      throw new Error('Missing client_id or trainer_id');
+    }
+
+    // Log the data we're trying to insert for debugging
+    console.log('Creating training session with data:', JSON.stringify({
+      client_id: sessionData.client_id,
+      trainer_id: sessionData.trainer_id,
+      template_id: sessionData.template_id,
+      plan_id: sessionData.plan_id,
+    }));
+
+    // Simple insert without any additional fields
     const { data: session, error } = await supabase
       .from('training_sessions')
       .insert({
@@ -331,5 +345,5 @@ export const getTrainingSessionsForPlanSessions = async (
   } catch (error) {
     console.error('Error in getTrainingSessionsForPlanSessions:', error);
     return [];
-  }zz
+  }
 };

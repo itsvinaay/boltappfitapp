@@ -26,11 +26,14 @@ import {
 } from 'lucide-react-native';
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
-import { WorkoutTemplate, WorkoutSession, WorkoutSet } from '@/types/workout';
+import { WorkoutTemplate, WorkoutSession, WorkoutSet, WorkoutPlan, TrainingSession } from '@/types/workout';
 import { generateId } from '@/utils/workoutUtils';
 import { getWorkoutTemplatesForPlans, getWorkoutTemplateById, getTemplateExercisesByTemplateId } from '@/lib/planDatabase';
 import { saveSession } from '@/utils/storage';
+import { getWorkoutPlan } from '@/lib/planDatabase';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { createWorkoutSession } from '@/lib/workoutSessionQueries';
 import YouTubePlayer from '@/components/ui/YouTubePlayer';
 
 interface ActiveSet extends WorkoutSet {
@@ -50,10 +53,12 @@ export default function StartWorkoutScreen() {
   const colorScheme = useColorScheme();
   const colors = getColors((colorScheme as 'light' | 'dark' | null));
   const styles = createStyles(colors);
-  const { templateId } = useLocalSearchParams();
+  const { templateId, planId } = useLocalSearchParams();
+  const { user } = useAuth();
 
   const [template, setTemplate] = useState<WorkoutTemplate | null>(null);
   const [workoutSession, setWorkoutSession] = useState<WorkoutSession | null>(null);
+  const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [exercises, setExercises] = useState<ActiveExercise[]>([]);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [isWorkoutStarted, setIsWorkoutStarted] = useState(false);
@@ -148,6 +153,14 @@ export default function StartWorkoutScreen() {
         setTemplate({ ...loadedTemplate, exercises });
         initializeExercises({ ...loadedTemplate, exercises });
         initializeWorkoutSession(loadedTemplate);
+        if (planId) {
+          const loadedPlan = await getWorkoutPlan(planId as string);
+          if (loadedPlan) {
+            setPlan(loadedPlan);
+          } else {
+            Alert.alert('Error', 'Could not load workout plan details.');
+          }
+        }
       } else {
         Alert.alert('Error', 'Workout template not found');
         router.back();
@@ -198,7 +211,7 @@ export default function StartWorkoutScreen() {
   const initializeWorkoutSession = (template: WorkoutTemplate) => {
     const session: WorkoutSession = {
       id: generateId(),
-      client_id: 'current-user', // TODO: Get from user context
+      client_id: user?.id || '',
       template_id: template.id,
       date: new Date().toISOString().split('T')[0],
       start_time: new Date().toISOString(),
@@ -266,30 +279,46 @@ export default function StartWorkoutScreen() {
   };
 
   const finishWorkout = async () => {
-    if (!workoutSession) return;
+    if (!workoutSession || !plan || !user) {
+      Alert.alert('Error', 'Session, plan, or user data is missing.');
+      return;
+    }
 
     try {
-      const completedSession: WorkoutSession = {
-        ...workoutSession,
+      console.log('Creating workout session for client_id:', user.id);
+
+      // Prepare the workout session data
+      const completedWorkoutSession: Partial<WorkoutSession> = {
+        client_id: user.id,
+        template_id: template?.id,
+        date: new Date().toISOString().split('T')[0],
+        start_time: workoutSession.start_time,
         end_time: new Date().toISOString(),
-        exercises: exercises.map(exercise => ({
-          exercise_id: exercise.exerciseId,
-          sets: exercise.sets.map(set => ({
-            id: set.id,
-            reps: set.reps,
-            weight: set.weight,
-            duration: set.duration,
-            rest_time: set.rest_time,
-            completed: set.completed,
-            notes: set.notes,
-          })),
-          notes: exercise.notes,
+        exercises: exercises.map(e => ({
+          exercise_id: e.exerciseId,
+          notes: e.notes,
+          sets: e.sets,
         })),
         notes: workoutNotes,
         completed: true,
+        synced: false,
       };
 
-      await saveSession(completedSession);
+      // Save to database
+      const newDbSession = await createWorkoutSession(completedWorkoutSession);
+
+      if (!newDbSession) {
+        throw new Error('Failed to create workout session in the database.');
+      }
+
+      // Update the local session with the database ID
+      const completedLocalSession: WorkoutSession = {
+        ...completedWorkoutSession,
+        id: newDbSession.id,
+        synced: true,
+      } as WorkoutSession;
+
+      await saveSession(completedLocalSession);
       
       Alert.alert(
         'Workout Complete!',
@@ -298,7 +327,52 @@ export default function StartWorkoutScreen() {
       );
     } catch (error) {
       console.error('Error saving workout session:', error);
-      Alert.alert('Error', 'Failed to save workout session');
+      
+      // Extract detailed error information
+      let errorMessage = 'An unknown error occurred.';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      
+      // Check for Supabase PostgreSQL error format
+      const pgError = (error as any)?.error?.details?.message ||
+                      (error as any)?.error?.message ||
+                      (error as any)?.message;
+                      
+      if (pgError) {
+        console.error('PostgreSQL error details:', pgError);
+        
+        // Check for RLS policy violation
+        if (pgError.includes('row-level security') || errorMessage.includes('row-level security')) {
+          errorMessage = 'Permission denied: You do not have access to create training sessions. This may be because you are not properly associated with this workout plan.';
+        } else {
+          errorMessage = `Database error: ${pgError}`;
+        }
+      }
+      
+      Alert.alert('Error', `Failed to save workout session: ${errorMessage}`);
+      
+      // Save locally if DB fails
+      const completedLocalSession: WorkoutSession = {
+        ...workoutSession,
+        end_time: new Date().toISOString(),
+        exercises: exercises.map(e => ({
+          exercise_id: e.exerciseId,
+          notes: e.notes,
+          sets: e.sets,
+        })),
+        notes: workoutNotes,
+        completed: true,
+        synced: false,
+      };
+      await saveSession(completedLocalSession);
+      
+      // Log additional context for debugging
+      console.log('Saved session locally. Context:', {
+        userId: user.id,
+        trainerId: plan?.trainer_id,
+        templateId: template?.id
+      });
     }
   };
 
@@ -482,7 +556,6 @@ export default function StartWorkoutScreen() {
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Current Exercise */}
         <View style={styles.exerciseCard}>
-          {console.log('Current Exercise Data:', template.exercises[currentExerciseIndex])}
           {/* Show YouTube video if available */}
           {currentExercise && template.exercises && template.exercises[currentExerciseIndex]?.exercise?.video_url ? (
             <YouTubePlayer video_url={template.exercises[currentExerciseIndex].exercise.video_url} />
