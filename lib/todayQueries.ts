@@ -6,6 +6,21 @@ export interface TodayClientData {
   workoutSessions: any[];
   activeGoals: any[];
   clientAssignment: any;
+  todayPlan: {
+    template?: any;
+    exercises?: any[];
+    scheduledTime?: string;
+  };
+  todaySession?: {
+    id?: string;
+    template_id?: string;
+    start_time?: string;
+    end_time?: string;
+    duration_minutes?: number;
+    exercises?: any[];
+    notes?: string;
+    completed?: boolean;
+  };
 }
 
 export interface TodayTrainerData {
@@ -93,12 +108,61 @@ export const getClientTodayData = async (): Promise<TodayClientData | null> => {
       .eq('status', 'active')
       .single();
 
+    // Get today's plan (from plan_sessions)
+    const { data: todayPlan } = await supabase
+      .from('plan_sessions')
+      .select(`
+        *,
+        template:workout_templates(
+          *,
+          exercises:template_exercises(
+            *,
+            exercise:exercise_id(*)
+          )
+        )
+      `)
+      .eq('client_id', profile.id)
+      .eq('scheduled_date', today)
+      .single();
+
+    // Get today's session (from training_sessions)
+    const { data: todaySession } = await supabase
+      .from('training_sessions')
+      .select(`
+        *,
+        template:workout_templates(
+          *,
+          exercises:template_exercises(
+            *,
+            exercise:exercise_id(*)
+          )
+        )
+      `)
+      .eq('client_id', profile.id)
+      .eq('scheduled_date', today)
+      .single();
+
     return {
       profile,
       todayStats: todayStats || null,
       workoutSessions: workoutSessions || [],
       activeGoals: activeGoals || [],
       clientAssignment: clientAssignment || null,
+      todayPlan: todayPlan || {
+        template: null,
+        exercises: [],
+        scheduledTime: null
+      },
+      todaySession: todaySession || {
+        id: null,
+        template_id: null,
+        start_time: null,
+        end_time: null,
+        duration_minutes: 0,
+        exercises: [],
+        notes: null,
+        completed: false
+      }
     };
   } catch (error) {
     console.error('Error fetching client today data:', error);

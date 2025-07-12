@@ -383,7 +383,7 @@ export default function CreatePlanScreen() {
             trainer_id: plan.trainer_id,
             template_id: s.template_id ?? null,
             plan_id: plan.id,
-            scheduled_date: (s.scheduled_date instanceof Date ? s.scheduled_date.toISOString().split('T')[0] : s.scheduled_date),
+            scheduled_date: s.scheduled_date,
             scheduled_time: null,
             duration: 0,
             session_type: 'workout',

@@ -46,6 +46,7 @@ export interface WorkoutTemplate {
   exercises: TemplateExercise[];
   thumbnail_url?: string; // Add this line
   image_url?: string;
+  duration?: number;
 }
 
 

@@ -11,10 +11,10 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { 
-  ArrowLeft, 
-  Play, 
-  Pause, 
+import {
+  ArrowLeft,
+  Play,
+  Pause,
   Square,
   Clock,
   Check,
@@ -26,26 +26,22 @@ import {
 } from 'lucide-react-native';
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
-import { WorkoutTemplate, WorkoutSession, WorkoutSet, WorkoutPlan, TrainingSession, ActiveSet, ActiveExercise } from '@/types/workout';
-import { generateId } from '@/utils/workoutUtils';
-import { getWorkoutTemplatesForPlans, getWorkoutTemplateById, getTemplateExercisesByTemplateId } from '@/lib/planDatabase';
-import { saveSession } from '@/utils/storage';
-import { getWorkoutPlan } from '@/lib/planDatabase';
-import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
-import { createWorkoutSession } from '@/lib/workoutSessionQueries';
-import YouTubePlayer from '@/components/ui/YouTubePlayer';
+import { getWorkoutTemplate } from '@/lib/workoutTemplates'; // Import from new lib
+import {
+  getTrainingSession,
+  updateTrainingSessionData,
+  completeTrainingSession
+} from '@/lib/trainingSessionQueries'; // Import from new lib
+import { TrainingSession, WorkoutSet, ActiveExercise, ActiveSet, WorkoutTemplate } from '@/types/workout'; // Import ActiveExercise, ActiveSet, WorkoutTemplate
 
 export default function StartWorkoutScreen() {
   const colorScheme = useColorScheme();
-  const colors = getColors((colorScheme as 'light' | 'dark' | null));
+  const colors = getColors(colorScheme);
   const styles = createStyles(colors);
-  const { templateId, planId } = useLocalSearchParams();
-  const { user } = useAuth();
+  const { sessionId } = useLocalSearchParams();
 
+  const [trainingSession, setTrainingSession] = useState<TrainingSession | null>(null);
   const [template, setTemplate] = useState<WorkoutTemplate | null>(null);
-  const [workoutSession, setWorkoutSession] = useState<WorkoutSession | null>(null);
-  const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [exercises, setExercises] = useState<ActiveExercise[]>([]);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [isWorkoutStarted, setIsWorkoutStarted] = useState(false);
@@ -56,12 +52,14 @@ export default function StartWorkoutScreen() {
   const [showRestTimer, setShowRestTimer] = useState(false);
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [workoutNotes, setWorkoutNotes] = useState('');
+  const [sessionRating, setSessionRating] = useState(0);
+  const [loading, setLoading] = useState(true);
 
   const workoutTimerRef = useRef<NodeJS.Timeout | null>(null);
   const restTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    loadTemplate();
+    loadSessionData();
     return () => {
       if (workoutTimerRef.current) clearInterval(workoutTimerRef.current);
       if (restTimerRef.current) clearInterval(restTimerRef.current);
@@ -70,10 +68,9 @@ export default function StartWorkoutScreen() {
 
   useEffect(() => {
     if (isWorkoutStarted && !isPaused) {
-      if (workoutTimerRef.current) clearInterval(workoutTimerRef.current);
       workoutTimerRef.current = setInterval(() => {
-        setWorkoutTime((prev: number) => prev + 1);
-      }, 1000) as unknown as NodeJS.Timeout;
+        setWorkoutTime(prev => prev + 1);
+      }, 1000);
     } else {
       if (workoutTimerRef.current) {
         clearInterval(workoutTimerRef.current);
@@ -88,9 +85,8 @@ export default function StartWorkoutScreen() {
 
   useEffect(() => {
     if (isResting && restTime > 0) {
-      if (restTimerRef.current) clearInterval(restTimerRef.current);
       restTimerRef.current = setInterval(() => {
-        setRestTime((prev: number) => {
+        setRestTime(prev => {
           if (prev <= 1) {
             setIsResting(false);
             setShowRestTimer(false);
@@ -98,7 +94,7 @@ export default function StartWorkoutScreen() {
           }
           return prev - 1;
         });
-      }, 1000) as unknown as NodeJS.Timeout;
+      }, 1000);
     } else {
       if (restTimerRef.current) {
         clearInterval(restTimerRef.current);
@@ -111,136 +107,155 @@ export default function StartWorkoutScreen() {
     };
   }, [isResting, restTime]);
 
-  const loadTemplate = async () => {
+  const loadSessionData = async () => {
     try {
-      console.log('Fetching template with id:', templateId);
-     
-      const templates = await getWorkoutTemplatesForPlans();
-      const exists = templates.some(t => t.id === templateId);
-      console.log('Template exists:', exists);
-     
-      if (!exists) {
-        Alert.alert('Error', 'Workout template not found');
-        router.back();
+      setLoading(true);
+
+      // Load training session
+      const session = await getTrainingSession(sessionId as string);
+      if (!session) {
+        Alert.alert('Error', 'Training session not found', [
+          { text: 'OK', onPress: () => router.back() }
+        ]);
         return;
       }
-     
-      const loadedTemplate = await getWorkoutTemplateById(templateId as string);
-      console.log('Loaded template:', loadedTemplate);
-      console.log('Template exercises structure:', loadedTemplate?.exercises);
-     
-      let exercises = loadedTemplate?.exercises || [];
-     
-      if (!Array.isArray(exercises) || !exercises.length) {
-        // Fallback: fetch exercises directly
-        exercises = await getTemplateExercisesByTemplateId(templateId as string);
-        console.log('Directly fetched exercises:', exercises);
-      }
-     
-      if (loadedTemplate) {
-        setTemplate({ ...loadedTemplate, exercises });
-        initializeExercises({ ...loadedTemplate, exercises });
-        initializeWorkoutSession(loadedTemplate);
-       
-        if (planId) {
-          const loadedPlan = await getWorkoutPlan(planId as string);
-          if (loadedPlan) {
-            setPlan(loadedPlan);
-          } else {
-            console.warn('Could not load workout plan details for planId:', planId);
-          }
+
+      setTrainingSession(session);
+
+      let workoutTemplate = null;
+      if (session.template_id) {
+        workoutTemplate = await getWorkoutTemplate(session.template_id);
+        if (workoutTemplate) {
+          setTemplate(workoutTemplate);
+          initializeExercises(workoutTemplate); // Initialize from template
+        } else {
+          // If template_id exists but template not found, log and proceed with basic structure
+          console.warn(`Workout template with ID ${session.template_id} not found.`);
+          initializeFromSessionData(session);
         }
       } else {
-        Alert.alert('Error', 'Could not load workout template.');
-        router.back();
+        // Handle sessions without templates - create basic structure
+        initializeFromSessionData(session);
       }
+
+      // Load existing session data if resuming
+      if (session.session_data && Object.keys(session.session_data).length > 0) {
+        loadExistingSessionData(session.session_data);
+      }
+
     } catch (error) {
-      console.error('Error loading template:', error);
-      Alert.alert('Error', 'Failed to load workout template.');
-      router.back();
+      console.error('Error loading session data:', error);
+      Alert.alert('Error', 'Failed to load workout session', [
+        { text: 'OK', onPress: () => router.back() }
+      ]);
+    } finally {
+      setLoading(false);
     }
   };
 
   const initializeExercises = (template: WorkoutTemplate) => {
-    if (!Array.isArray(template.exercises) || !template.exercises.length) {
-      console.warn('No exercises array or empty for template:', template);
-      setExercises([]);
-      return;
-    }
-    
-    const activeExercises: ActiveExercise[] = template.exercises.map(templateExercise => {
-      // Ensure we have exercise details
-      if (!templateExercise.exercise) {
-        console.warn('Template exercise missing exercise details:', templateExercise);
-        return {
-          exerciseId: templateExercise.exercise_id || '',
-          exerciseName: 'Unknown Exercise',
-          sets: [],
-          currentSetIndex: 0,
-          notes: templateExercise.notes || '',
-        };
-      }
-      
-      let setsConfig = templateExercise.sets_config;
-      
-      // Handle sets_config parsing robustly
-      if (typeof setsConfig === 'string') {
-        try {
-          setsConfig = JSON.parse(setsConfig);
-        } catch (parseError) {
-          console.warn('Failed to parse sets_config as JSON:', setsConfig, parseError);
-          setsConfig = [];
-        }
-      }
-      
-      // Ensure setsConfig is an array
-      if (!Array.isArray(setsConfig)) {
-        console.warn('sets_config is not an array after parsing:', setsConfig);
-        setsConfig = [];
-      }
-      
-      return {
-        exerciseId: templateExercise.exercise.id,
-        exerciseName: templateExercise.exercise.name,
-        sets: setsConfig.map((set: any) => ({
-          id: generateId(),
-          reps: set.reps || 0,
-          weight: set.weight || 0,
-          duration: set.duration || 0,
-          rest_time: set.rest_time || 60,
-          completed: false,
-          notes: '',
-        })),
-        currentSetIndex: 0,
-        notes: templateExercise.notes || '',
-      };
-    }).filter(exercise => exercise.exerciseId); // Filter out exercises without valid IDs
-    
-    console.log('Initialized active exercises:', activeExercises);
+    const activeExercises: ActiveExercise[] = template.exercises.map((templateExercise, index) => ({
+      exerciseId: templateExercise.exercise.id,
+      exerciseName: templateExercise.exercise.name,
+      sets: Array.isArray(templateExercise.sets_config)
+        ? templateExercise.sets_config.map((setConfig: WorkoutSet, setIndex: number) => ({
+            id: `set-${templateExercise.exercise.id}-${setIndex}`,
+            reps: setConfig.reps,
+            weight: setConfig.weight,
+            duration: setConfig.duration,
+            rest_time: setConfig.rest_time || 60,
+            completed: false,
+            notes: setConfig.notes || '',
+          }))
+        : [],
+      currentSetIndex: 0,
+      notes: templateExercise.notes || '',
+    }));
     setExercises(activeExercises);
   };
 
-  const initializeWorkoutSession = (template: WorkoutTemplate) => {
-    const session: WorkoutSession = {
-      id: generateId(),
-      client_id: user?.id || '',
-      template_id: template.id,
-      date: new Date().toISOString().split('T')[0],
-      start_time: new Date().toISOString(),
-      exercises: [],
-      completed: false,
-      synced: false,
+  // This function is now a fallback for sessions without a template or if template loading fails
+  const initializeFromSessionData = (session: TrainingSession) => {
+    // If session has exercises_completed data, use that
+    if (session.exercises_completed && session.exercises_completed.length > 0) {
+      const activeExercises: ActiveExercise[] = session.exercises_completed.map((completedExercise: any, exIndex: number) => ({
+        exerciseId: completedExercise.exerciseId || `custom-ex-${exIndex}`,
+        exerciseName: completedExercise.exerciseName || `Exercise ${exIndex + 1}`,
+        sets: completedExercise.sets.map((completedSet: any, setIndex: number) => ({
+          id: completedSet.id || `custom-set-${exIndex}-${setIndex}`,
+          reps: completedSet.reps,
+          weight: completedSet.weight,
+          duration: completedSet.duration,
+          rest_time: completedSet.rest_time || 60,
+          completed: completedSet.completed || false,
+          notes: completedSet.notes || '',
+        })),
+        currentSetIndex: completedExercise.currentSetIndex || 0,
+        notes: completedExercise.notes || '',
+      }));
+      setExercises(activeExercises);
+    } else {
+      // Create a basic structure if no template and no exercises_completed
+      const basicExercises: ActiveExercise[] = [{
+        exerciseId: 'custom-1',
+        exerciseName: session.type || 'Custom Workout',
+        sets: [{
+          id: 'set-0-0',
+          reps: 10,
+          weight: 0,
+          rest_time: 60,
+          completed: false,
+          notes: '',
+        }],
+        currentSetIndex: 0,
+        notes: 'Add your exercises and sets',
+      }];
+      setExercises(basicExercises);
+    }
+  };
+
+  const loadExistingSessionData = (sessionData: any) => {
+    if (sessionData.exercises) {
+      setExercises(sessionData.exercises);
+    }
+    if (sessionData.workoutTime) {
+      setWorkoutTime(sessionData.workoutTime);
+    }
+    if (sessionData.currentExerciseIndex !== undefined) {
+      setCurrentExerciseIndex(sessionData.currentExerciseIndex);
+    }
+    if (sessionData.isStarted) {
+      setIsWorkoutStarted(true);
+    }
+  };
+
+  const saveSessionProgress = async () => {
+    if (!trainingSession) return;
+
+    const sessionData = {
+      exercises,
+      workoutTime,
+      currentExerciseIndex,
+      isStarted: isWorkoutStarted,
+      lastSaved: new Date().toISOString(),
     };
-    setWorkoutSession(session);
+
+    await updateTrainingSessionData(trainingSession.id, sessionData);
+  };
+
+  const generateId = (): string => {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
   };
 
   const startWorkout = () => {
     setIsWorkoutStarted(true);
     setIsPaused(false);
+    saveSessionProgress();
   };
 
   const pauseWorkout = () => {
     setIsPaused(true);
+    saveSessionProgress();
   };
 
   const resumeWorkout = () => {
@@ -282,6 +297,9 @@ export default function StartWorkoutScreen() {
       // Workout complete
       setShowFinishModal(true);
     }
+
+    // Save progress
+    saveSessionProgress();
   };
 
   const skipRestTimer = () => {
@@ -291,116 +309,48 @@ export default function StartWorkoutScreen() {
   };
 
   const finishWorkout = async () => {
-    if (!workoutSession || !user) {
-      Alert.alert('Error', 'Session or user data is missing.');
-      return;
-    }
+    if (!trainingSession) return;
 
     try {
-      console.log('Creating workout session for client_id:', user.id);
-
-      // Prepare the workout session data
-      const completedWorkoutSession: Partial<WorkoutSession> = {
-        client_id: user.id,
-        template_id: template?.id,
-        date: new Date().toISOString().split('T')[0],
-        start_time: workoutSession.start_time,
-        end_time: new Date().toISOString(),
-        exercises: exercises.map(e => ({
-          exercise_id: e.exerciseId,
-          notes: e.notes,
-          sets: e.sets,
-        })),
-        notes: workoutNotes,
-        completed: true,
-        synced: false,
+      const completionData = {
+        exercises_completed: exercises,
+        trainer_notes: workoutNotes.trim() || undefined,
+        session_rating: sessionRating || undefined,
+        duration: Math.round(workoutTime / 60),
+        completed_at: new Date().toISOString(),
       };
 
-      // Conditionally add plan-related data if available
-      if (plan) {
-        completedWorkoutSession.plan_id = plan.id;
+      const success = await completeTrainingSession(trainingSession.id, completionData);
+
+      if (success) {
+        Alert.alert(
+          'Workout Complete!',
+          'Great job! Your workout has been saved.',
+          [{ text: 'OK', onPress: () => router.replace('/(tabs)') }]
+        );
+      } else {
+        Alert.alert('Error', 'Failed to save workout session');
       }
-
-      // Save to database
-      const newDbSession = await createWorkoutSession(completedWorkoutSession);
-
-      if (!newDbSession) {
-        throw new Error('Failed to create workout session in the database.');
-      }
-
-      // Update the local session with the database ID
-      const completedLocalSession: WorkoutSession = {
-        ...completedWorkoutSession,
-        id: newDbSession.id,
-        synced: true,
-      } as WorkoutSession;
-
-      await saveSession(completedLocalSession);
-      
-      Alert.alert(
-        'Workout Complete!',
-        'Great job! Your workout has been saved.',
-        [{ text: 'OK', onPress: () => router.replace('/(tabs)') }]
-      );
     } catch (error) {
-      console.error('Error saving workout session:', error);
-      
-      // Extract detailed error information
-      let errorMessage = 'An unknown error occurred.';
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-      
-      // Check for Supabase PostgreSQL error format
-      const pgError = (error as any)?.error?.details?.message ||
-                       (error as any)?.error?.message ||
-                       (error as any)?.message;
-                       
-      if (pgError) {
-        console.error('PostgreSQL error details:', pgError);
-        
-        // Check for RLS policy violation
-        if (pgError.includes('row-level security') || errorMessage.includes('row-level security')) {
-          errorMessage = 'Permission denied: You do not have access to create training sessions. This may be because you are not properly associated with this workout plan.';
-        } else {
-          errorMessage = `Database error: ${pgError}`;
-        }
-      }
-      
-      Alert.alert('Error', `Failed to save workout session: ${errorMessage}`);
-      
-      // Save locally if DB fails
-      const completedLocalSession: WorkoutSession = {
-        ...workoutSession,
-        end_time: new Date().toISOString(),
-        exercises: exercises.map(e => ({
-          exercise_id: e.exerciseId,
-          notes: e.notes,
-          sets: e.sets,
-        })),
-        notes: workoutNotes,
-        completed: true,
-        synced: false,
-      };
-      await saveSession(completedLocalSession);
-      
-      // Log additional context for debugging
-      console.log('Saved session locally. Context:', {
-        userId: user.id,
-        planId: plan?.id,
-        trainerId: plan?.trainer_id || 'No plan associated',
-        templateId: template?.id
-      });
+      console.error('Error finishing workout:', error);
+      Alert.alert('Error', 'Failed to save workout session');
     }
   };
 
   const exitWorkout = () => {
     Alert.alert(
       'Exit Workout',
-      'Are you sure you want to exit? Your progress will be lost.',
+      'Your progress will be saved. You can resume this workout later.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Exit', style: 'destructive', onPress: () => router.back() }
+        {
+          text: 'Exit',
+          style: 'default',
+          onPress: async () => {
+            await saveSessionProgress();
+            router.back();
+          }
+        }
       ]
     );
   };
@@ -409,7 +359,7 @@ export default function StartWorkoutScreen() {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    
+
     if (hours > 0) {
       return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
@@ -428,16 +378,16 @@ export default function StartWorkoutScreen() {
         isCompleted && styles.completedSetRow
       ]}>
         <Text style={styles.setNumber}>{setIndex + 1}</Text>
-        
+
         <View style={styles.setInputs}>
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Reps</Text>
             <TextInput
               style={[styles.setInput, isCompleted && styles.completedInput]}
               value={set.reps?.toString() || ''}
-              onChangeText={(value) => {
+              onChangeText={(text) => {
                 const updatedExercises = [...exercises];
-                updatedExercises[currentExerciseIndex].sets[setIndex].reps = parseInt(value) || 0;
+                updatedExercises[currentExerciseIndex].sets[setIndex].reps = parseInt(text) || 0;
                 setExercises(updatedExercises);
               }}
               keyboardType="numeric"
@@ -452,9 +402,9 @@ export default function StartWorkoutScreen() {
             <TextInput
               style={[styles.setInput, isCompleted && styles.completedInput]}
               value={set.weight?.toString() || ''}
-              onChangeText={(value) => {
+              onChangeText={(text) => {
                 const updatedExercises = [...exercises];
-                updatedExercises[currentExerciseIndex].sets[setIndex].weight = parseFloat(value) || 0;
+                updatedExercises[currentExerciseIndex].sets[setIndex].weight = parseFloat(text) || 0;
                 setExercises(updatedExercises);
               }}
               keyboardType="numeric"
@@ -469,9 +419,9 @@ export default function StartWorkoutScreen() {
             <TextInput
               style={[styles.setInput, isCompleted && styles.completedInput]}
               value={set.rest_time?.toString() || ''}
-              onChangeText={(value) => {
+              onChangeText={(text) => {
                 const updatedExercises = [...exercises];
-                updatedExercises[currentExerciseIndex].sets[setIndex].rest_time = parseInt(value) || 0;
+                updatedExercises[currentExerciseIndex].sets[setIndex].rest_time = parseInt(text) || 0;
                 setExercises(updatedExercises);
               }}
               keyboardType="numeric"
@@ -502,7 +452,7 @@ export default function StartWorkoutScreen() {
     );
   };
 
-  if (!template) {
+  if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
@@ -511,16 +461,14 @@ export default function StartWorkoutScreen() {
       </SafeAreaView>
     );
   }
-  
-  if (!exercises.length) {
+
+  if (!trainingSession || exercises.length === 0) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>No exercises found for this workout template.</Text>
-          <TouchableOpacity 
-            style={styles.backButton} 
-            onPress={() => router.back()}
-          >
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorTitle}>Session Not Found</Text>
+          <Text style={styles.errorText}>The training session could not be loaded.</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
@@ -537,9 +485,11 @@ export default function StartWorkoutScreen() {
         <TouchableOpacity onPress={exitWorkout} style={styles.backButton}>
           <ArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        
+
         <View style={styles.headerCenter}>
-          <Text style={styles.workoutTitle}>{template.name}</Text>
+          <Text style={styles.workoutTitle}>
+            {template?.name || trainingSession.type || 'Training Session'}
+          </Text>
           <Text style={styles.workoutTime}>{formatTime(workoutTime)}</Text>
         </View>
 
@@ -549,8 +499,8 @@ export default function StartWorkoutScreen() {
               <Play size={20} color="#FFFFFF" />
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity 
-              style={styles.pauseButton} 
+            <TouchableOpacity
+              style={styles.pauseButton}
               onPress={isPaused ? resumeWorkout : pauseWorkout}
             >
               {isPaused ? (
@@ -566,11 +516,11 @@ export default function StartWorkoutScreen() {
       {/* Progress Bar */}
       <View style={styles.progressContainer}>
         <View style={styles.progressBackground}>
-          <View 
+          <View
             style={[
-              styles.progressFill, 
+              styles.progressFill,
               { width: `${((currentExerciseIndex + 1) / exercises.length) * 100}%` }
-            ]} 
+            ]}
           />
         </View>
         <Text style={styles.progressText}>
@@ -581,12 +531,8 @@ export default function StartWorkoutScreen() {
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Current Exercise */}
         <View style={styles.exerciseCard}>
-          {/* Show YouTube video if available */}
-          {currentExercise && template.exercises && template.exercises[currentExerciseIndex]?.exercise?.video_url ? (
-            <YouTubePlayer video_url={template.exercises[currentExerciseIndex].exercise.video_url} />
-          ) : null}
           <Text style={styles.exerciseName}>{currentExercise.exerciseName}</Text>
-          
+
           <View style={styles.setsContainer}>
             <View style={styles.setsHeader}>
               <Text style={styles.setHeaderText}>Set</Text>
@@ -595,8 +541,8 @@ export default function StartWorkoutScreen() {
               <Text style={styles.setHeaderText}>Rest</Text>
               <Text style={styles.setHeaderText}>✓</Text>
             </View>
-            
-            {currentExercise.sets.map((_, setIndex) => 
+
+            {currentExercise.sets.map((_, setIndex) =>
               renderSetInput(currentExercise, setIndex)
             )}
           </View>
@@ -656,7 +602,7 @@ export default function StartWorkoutScreen() {
         </View>
 
         {/* Finish Workout Button */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.finishButton}
           onPress={() => setShowFinishModal(true)}
         >
@@ -678,13 +624,13 @@ export default function StartWorkoutScreen() {
           <View style={styles.restModalContent}>
             <Text style={styles.restModalTitle}>Rest Time</Text>
             <Text style={styles.restTimer}>{formatTime(restTime)}</Text>
-            
+
             <View style={styles.restActions}>
               <TouchableOpacity style={styles.skipRestButton} onPress={skipRestTimer}>
                 <Text style={styles.skipRestText}>Skip Rest</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={styles.addTimeButton}
                 onPress={() => setRestTime(prev => prev + 30)}
               >
@@ -726,6 +672,27 @@ export default function StartWorkoutScreen() {
               </Text>
             </View>
 
+            {/* Session Rating */}
+            <View style={styles.ratingContainer}>
+              <Text style={styles.ratingLabel}>How was your workout?</Text>
+              <View style={styles.ratingStars}>
+                {[1, 2, 3, 4, 5].map((rating) => (
+                  <TouchableOpacity
+                    key={rating}
+                    style={styles.ratingButton}
+                    onPress={() => setSessionRating(rating)}
+                  >
+                    <Text style={[
+                      styles.ratingStar,
+                      rating <= sessionRating && styles.ratingStarActive
+                    ]}>
+                      ⭐
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
             <View style={styles.finalNotesContainer}>
               <Text style={styles.finalNotesLabel}>Workout Notes</Text>
               <TextInput
@@ -760,14 +727,31 @@ const createStyles = (colors: any) => StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
   },
   loadingText: {
     fontFamily: 'Inter-Regular',
     fontSize: 16,
     color: colors.textSecondary,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  errorTitle: {
+    fontFamily: 'Inter-Bold',
+    fontSize: 20,
+    color: colors.text,
+    marginBottom: 8,
     textAlign: 'center',
-    marginBottom: 20,
+  },
+  errorText: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 16,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 24,
   },
   backButton: {
     backgroundColor: colors.primary,
@@ -1130,6 +1114,31 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontSize: 14,
     color: colors.textSecondary,
     marginBottom: 4,
+  },
+  ratingContainer: {
+    alignItems: 'center',
+  },
+  ratingLabel: {
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 16,
+    color: colors.text,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  ratingStars: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  ratingButton: {
+    padding: 4,
+  },
+  ratingStar: {
+    fontSize: 32,
+    opacity: 0.3,
+  },
+  ratingStarActive: {
+    opacity: 1,
   },
   finalNotesContainer: {
     marginBottom: 24,

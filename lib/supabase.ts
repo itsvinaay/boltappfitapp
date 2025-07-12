@@ -39,6 +39,7 @@ const ExpoSecureStoreAdapter = {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
+    // storage: AsyncStorage,
     storage: ExpoSecureStoreAdapter,
     autoRefreshToken: true,
     persistSession: true,
@@ -87,3 +88,71 @@ export const updateProfile = async (updates: any) => {
   });
   return { data, error };
 };
+
+// Types
+export interface Database {
+  public: {
+    Tables: {
+      progress_photos: {
+        Row: {
+          id: string;
+          user_id: string;
+          image_url: string;
+          weight: number | null;
+          body_fat: number | null;
+          muscle_percentage: number | null;
+          measurements: Record<string, number> | null;
+          date: string;
+          time: string;
+          tags: string[] | null;
+          pose: 'front' | 'side' | 'back' | 'custom';
+          notes: string | null;
+          mood: 'motivated' | 'confident' | 'determined' | 'proud' | 'focused';
+          is_favorite: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          image_url: string;
+          weight?: number | null;
+          body_fat?: number | null;
+          muscle_percentage?: number | null;
+          measurements?: Record<string, number> | null;
+          date?: string;
+          time?: string;
+          tags?: string[] | null;
+          pose?: 'front' | 'side' | 'back' | 'custom';
+          notes?: string | null;
+          mood?: 'motivated' | 'confident' | 'determined' | 'proud' | 'focused';
+          is_favorite?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          image_url?: string;
+          weight?: number | null;
+          body_fat?: number | null;
+          muscle_percentage?: number | null;
+          measurements?: Record<string, number> | null;
+          date?: string;
+          time?: string;
+          tags?: string[] | null;
+          pose?: 'front' | 'side' | 'back' | 'custom';
+          notes?: string | null;
+          mood?: 'motivated' | 'confident' | 'determined' | 'proud' | 'focused';
+          is_favorite?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+    };
+  };
+}
+
+export type ProgressPhoto = Database['public']['Tables']['progress_photos']['Row'];
+export type NewProgressPhoto = Database['public']['Tables']['progress_photos']['Insert'];
+export type UpdateProgressPhoto = Database['public']['Tables']['progress_photos']['Update'];

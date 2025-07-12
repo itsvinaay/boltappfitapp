@@ -13,14 +13,6 @@ export default function MessagesScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <ArrowLeft size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.title}>Invitation Management</Text>
-        <View style={{ width: 24 }} />
-      </View>
-      
       <TrainerNewSessionsView />
     </SafeAreaView>
   );

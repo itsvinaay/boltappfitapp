@@ -15,20 +15,20 @@ import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { useUserRole } from '@/contexts/UserContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
+import { MetricChart, type MetricDataPoint } from '@/components/metrics/MetricChart';
 
 const { width } = Dimensions.get('window');
 
-const weightData = [
+const weightData: MetricDataPoint[] = [
   { date: '4/24', weight: 72 },
   { date: '5/6', weight: 71.5 },
   { date: '5/18', weight: 71 },
   { date: '5/30', weight: 70.5 },
   { date: '6/11', weight: 70 },
   { date: '6/22', weight: 69.5 },
-];
+].map(item => ({ date: item.date, value: item.weight }));
 
-// Dummy chest data for demonstration
-const chestData = [
+const chestData: MetricDataPoint[] = [
   { date: '4/24', value: 98 },
   { date: '5/6', value: 97.5 },
   { date: '5/18', value: 97 },
@@ -120,81 +120,9 @@ export default function ProfileClientView() {
   
   ];
 
-  const renderWeightChart = () => {
-    const maxWeight = Math.max(...weightData.map(d => d.weight));
-    const minWeight = Math.min(...weightData.map(d => d.weight));
-    const range = maxWeight - minWeight;
-    
-    return (
-      <View style={styles.chartContainer}>
-        <View style={styles.chartArea}>
-          {weightData.map((point, index) => {
-            const height = range > 0 ? ((point.weight - minWeight) / range) * 60 : 30;
-            const x = (index / (weightData.length - 1)) * (width - 120);
-            
-            return (
-              <View
-                key={index}
-                style={[
-                  styles.chartPoint,
-                  {
-                    left: x,
-                    bottom: height,
-                  }
-                ]}
-              />
-            );
-          })}
-          
-          {/* Chart line */}
-          <View style={styles.chartLine} />
-        </View>
-        
-        <View style={styles.chartLabels}>
-          {weightData.map((point, index) => (
-            <Text key={index} style={styles.chartLabel}>
-              {point.date}
-            </Text>
-          ))}
-        </View>
-      </View>
-    );
-  };
-
-  const renderMetricChart = (data: { date: string; value: number }[], label: string) => {
-    const max = Math.max(...data.map(d => d.value));
-    const min = Math.min(...data.map(d => d.value));
-    const range = max - min || 1;
-    return (
-      <View style={styles.chartContainer}>
-        <View style={styles.chartArea}>
-          {data.map((point, index) => {
-            const height = ((point.value - min) / range) * 60;
-            const x = (index / (data.length - 1)) * (width - 120);
-            return (
-              <View
-                key={index}
-                style={[
-                  styles.chartPoint,
-                  {
-                    left: x,
-                    bottom: height,
-                  },
-                ]}
-              />
-            );
-          })}
-          {/* Chart line logic can be added here if needed */}
-        </View>
-        <View style={styles.chartLabels}>
-          {data.map((point, index) => (
-            <Text key={index} style={styles.chartLabel}>
-              {point.date}
-            </Text>
-          ))}
-        </View>
-      </View>
-    );
+  const handleMetricPointPress = (point: MetricDataPoint, index: number) => {
+    console.log('Metric point pressed:', point, 'at index:', index);
+    // You can add haptic feedback or show a tooltip here
   };
 
   return (
@@ -263,26 +191,50 @@ export default function ProfileClientView() {
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 4 }}>
             <View style={[styles.metricsCard, { width: width - 80, marginRight: 16 }]}> 
-              <Text style={styles.metricsTitle}>WEIGHT (KG)</Text>
-              <View style={styles.weightInfo}>
-                <Text style={styles.currentWeight}>{currentWeight}</Text>
-                <Text style={styles.weightProgress}>
-                  {currentWeight > goalWeight ? `${(currentWeight - goalWeight).toFixed(1)} kg to goal` : 'Goal reached!'}
-                </Text>
+              <View style={styles.metricsHeader}>
+                <Text style={styles.metricsTitle}>WEIGHT (KG)</Text>
+                <View style={styles.currentValueContainer}>
+                  <Text style={styles.currentWeight}>{currentWeight}</Text>
+                  <Text style={styles.weightProgress}>
+                    {currentWeight > goalWeight ? `${(currentWeight - goalWeight).toFixed(1)} kg to goal` : 'Goal reached!'}
+                  </Text>
+                </View>
               </View>
-              {renderMetricChart(weightData.map(d => ({ date: d.date, value: d.weight })), 'Weight')}
+              <MetricChart
+                data={weightData}
+                unit="kg"
+                colors={colors}
+                chartHeight={100}
+                showTrend={true}
+                fillArea={true}
+                onPointPress={handleMetricPointPress}
+                lineColor={colors.primary}
+                pointColor={colors.primary}
+              />
             </View>
             <View style={[styles.metricsCard, { width: width - 80 }]}> 
-              <Text style={styles.metricsTitle}>CHEST (CM)</Text>
-              <View style={styles.weightInfo}>
-                <Text style={styles.currentWeight}>{chestData[chestData.length - 1].value}</Text>
-                <Text style={styles.weightProgress}>
-                  {chestData[0].value - chestData[chestData.length - 1].value > 0
-                    ? `${(chestData[0].value - chestData[chestData.length - 1].value).toFixed(1)} cm progress`
-                    : 'No change'}
-                </Text>
+              <View style={styles.metricsHeader}>
+                <Text style={styles.metricsTitle}>CHEST (CM)</Text>
+                <View style={styles.currentValueContainer}>
+                  <Text style={styles.currentWeight}>{chestData[chestData.length - 1].value}</Text>
+                  <Text style={styles.weightProgress}>
+                    {chestData[0].value - chestData[chestData.length - 1].value > 0
+                      ? `${(chestData[0].value - chestData[chestData.length - 1].value).toFixed(1)} cm progress`
+                      : 'No change'}
+                  </Text>
+                </View>
               </View>
-              {renderMetricChart(chestData, 'Chest')}
+              <MetricChart
+                data={chestData}
+                unit="cm"
+                colors={colors}
+                chartHeight={100}
+                showTrend={true}
+                fillArea={true}
+                onPointPress={handleMetricPointPress}
+                lineColor={colors.info}
+                pointColor={colors.info}
+              />
             </View>
           </ScrollView>
         </View>
@@ -454,7 +406,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   metricsCard: {
     backgroundColor: colors.surface,
     borderRadius: 12,
-    padding: 20,
+    padding: 16,
     shadowColor: colors.shadow,
     shadowOffset: {
       width: 0,
@@ -464,15 +416,17 @@ const createStyles = (colors: any) => StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
+  metricsHeader: {
+    marginBottom: 12,
+  },
+  currentValueContainer: {
+    marginTop: 8,
+  },
   metricsTitle: {
     fontFamily: 'Inter-SemiBold',
     fontSize: 12,
     color: colors.textSecondary,
     letterSpacing: 0.5,
-    marginBottom: 16,
-  },
-  weightInfo: {
-    marginBottom: 20,
   },
   currentWeight: {
     fontFamily: 'Inter-Bold',
@@ -484,40 +438,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontSize: 14,
     color: colors.textSecondary,
     marginTop: 4,
-  },
-  chartContainer: {
-    height: 100,
-  },
-  chartArea: {
-    height: 80,
-    position: 'relative',
-    marginBottom: 8,
-  },
-  chartPoint: {
-    position: 'absolute',
-    width: 6,
-    height: 6,
-    backgroundColor: colors.primary,
-    borderRadius: 3,
-    transform: [{ translateX: -3 }, { translateY: 3 }],
-  },
-  chartLine: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'transparent',
-  },
-  chartLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 3,
-  },
-  chartLabel: {
-    fontFamily: 'Inter-Regular',
-    fontSize: 10,
-    color: colors.textTertiary,
   },
   menuSection: {
     paddingHorizontal: 20,

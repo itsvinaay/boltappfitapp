@@ -43,6 +43,74 @@ export async function getWorkoutTemplates(): Promise<WorkoutTemplate[]> {
   }
 }
 
+export async function getWorkoutTemplatesForClient(clientId: string): Promise<WorkoutTemplate[]> {
+  try {
+    // First check if client has any templates
+    const { data: clientTemplates, error: templatesError } = await supabase
+      .from('workout_templates')
+      .select(`
+        *,
+        exercises:template_exercises(
+          order_index,
+          sets_config,
+          notes,
+          exercise:exercise_id(*)
+        )
+      `)
+      .eq('client_id', clientId)
+      .order('name', { ascending: true });
+
+    if (templatesError) {
+      console.error('Error fetching client templates:', templatesError);
+      return [];
+    }
+
+    // If no templates exist, create default ones for this client
+    if (!clientTemplates || clientTemplates.length === 0) {
+      await initializeDefaultTemplates();
+      
+      // After initialization, fetch the templates again
+      const { data: newTemplates, error: newError } = await supabase
+        .from('workout_templates')
+        .select(`
+          *,
+          exercises:template_exercises(
+            order_index,
+            sets_config,
+            notes,
+            exercise:exercise_id(*)
+          )
+        `)
+        .eq('client_id', clientId);
+
+      if (newError) {
+        console.error('Error fetching newly created templates:', newError);
+        return [];
+      }
+
+      return newTemplates || [];
+    }
+
+    // Map the data to the WorkoutTemplate interface
+    return clientTemplates.map((template: any) => ({
+      ...template,
+      exercises: template.exercises.map((te: any) => ({
+        id: te.exercise.id,
+        template_id: template.id,
+        exercise_id: te.exercise.id,
+        exercise: te.exercise,
+        order_index: te.order_index,
+        sets_config: te.sets_config,
+        notes: te.notes,
+        created_at: te.created_at,
+      })).sort((a: TemplateExercise, b: TemplateExercise) => a.order_index - b.order_index),
+    }));
+  } catch (error) {
+    console.error('Exception fetching client templates:', error);
+    return [];
+  }
+}
+
 export async function getWorkoutTemplate(templateId: string): Promise<WorkoutTemplate | null> {
   try {
     const { data, error } = await supabase

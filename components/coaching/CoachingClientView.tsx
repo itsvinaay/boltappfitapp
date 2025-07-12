@@ -32,9 +32,9 @@ import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTodayDataNew } from '../../hooks/useTodayDataNew';
 import { getWorkoutTemplates, initializeDefaultTemplates } from '../../lib/workoutTemplates';
-import { supabase } from '@/lib/supabase';
-import { getClientTrainingSessions } from '../../lib/trainingSessionQueries';
-import { TrainingSession } from '../../lib/database';
+import { supabase } from '@/lib/supabase'; // Import supabase
+import { getClientTrainingSessions } from '../../lib/trainingSessionQueries'; // Import getClientTrainingSessions
+import { TrainingSession } from '../../lib/database'; // Import TrainingSession type
 
 const { width } = Dimensions.get('window');
 
@@ -108,39 +108,17 @@ export default function CoachingClientView() {
       const startDate = weekDates[0] && typeof weekDates[0].toISOString === 'function' ? weekDates[0].toISOString().split('T')[0] : '';
       const endDate = weekDates[6] && typeof weekDates[6].toISOString === 'function' ? weekDates[6].toISOString().split('T')[0] : '';
 
-      let trainingSessions = await getClientTrainingSessions(clientId, startDate, endDate);
-
-      // Fallback: if no rows in training_sessions (e.g., mirroring failed), fetch from plan_sessions directly
-      if (trainingSessions.length === 0) {
-        const { data: planSessions, error } = await supabase
-          .from('plan_sessions')
-          .select('*, workout_templates(id, name), workout_plans!inner(client_id)')
-          .eq('workout_plans.client_id', clientId)
-          .gte('scheduled_date', startDate)
-          .lte('scheduled_date', endDate);
-        if (!error && planSessions) {
-          trainingSessions = planSessions.map((ps: any) => ({
-            id: ps.id,
-            client_id: clientId,
-            trainer_id: null,
-            template_id: ps.template_id,
-            plan_id: ps.plan_id,
-            scheduled_date: ps.scheduled_date,
-            scheduled_time: ps.scheduled_time ?? null,
-            duration: 0,
-            session_type: 'workout',
-            status: ps.status ?? 'scheduled',
-            session_data: {},
-            completion_data: {},
-          })).map(item => ({ ...item, created_at: item.scheduled_date, updated_at: item.scheduled_date })) as unknown as TrainingSession[];
-        }
-      }
+      console.log('Fetching training sessions for client:', clientId, 'from', startDate, 'to', endDate);
+      
+      const trainingSessions = await getClientTrainingSessions(clientId, startDate, endDate);
+      
+      console.log('Found training sessions:', trainingSessions.length);
 
       const dayNames = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
       const weeklyData: WeeklyWorkout[] = weekDates.map((date, index) => {
         const dateString = date && typeof date.toISOString === 'function' ? date.toISOString().split('T')[0] : '';
         const dayNumber = date.getDate();
-
+        
         const session = trainingSessions.find(s => {
           const sDate = s.scheduled_date ? new Date(s.scheduled_date).toISOString().split('T')[0] : '';
           return sDate === dateString;
@@ -153,6 +131,9 @@ export default function CoachingClientView() {
         let scheduledTime: string | undefined = undefined;
 
         if (session) {
+          console.log('Found session for', dateString, ':', session);
+          
+          // Handle sessions with template_id
           if (session.template_id) {
             const templateData = workoutTemplates.find(t => t.id === session.template_id);
             if (templateData) {
@@ -160,8 +141,14 @@ export default function CoachingClientView() {
             } else {
               template = { id: session.template_id, name: 'Workout' };
             }
+          } else {
+            // Handle custom sessions without template_id
+            template = { 
+              id: session.id, 
+              name: session.session_type || session.type || 'Custom Session' 
+            };
           }
-
+          
           sessionId = session.id;
           scheduledTime = session.scheduled_time ?? undefined;
 
@@ -189,6 +176,7 @@ export default function CoachingClientView() {
         };
       });
 
+      console.log('Weekly workouts data:', weeklyData);
       setWeeklyWorkouts(weeklyData);
     } catch (error) {
       console.error('Error loading weekly workouts:', error);
@@ -196,6 +184,7 @@ export default function CoachingClientView() {
       setLoadingWeekly(false);
     }
   };
+
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -210,46 +199,42 @@ export default function CoachingClientView() {
   const handleTrainingCalendarPress = () => {
     router.push('/training-calendar');
   };
-
   const handleDayPress = (workout: WeeklyWorkout) => {
-    if (!workout.template && !workout.sessionId) {
-      console.log('No workout scheduled for this day');
-      return;
-    }
 
-    // If we have a session ID, always use that for navigation
-    if (workout.sessionId) {
-      if (workout.completed) {
-        router.push(`/workout-detail/${workout.sessionId}`);
-      } else {
-        // For incomplete sessions, go to today's workout with the session ID
-        router.push(`/todays-workout/${workout.sessionId}`);
-      }
-    } 
-    // If we only have a template ID (no session ID)
-    else if (workout.template) {
-      if (workout.completed) {
-        // For completed workouts, try to find a matching session first
-        const matchingSession = trainingSessions.find(
-          s => s.template_id === workout.template?.id && s.status === 'completed'
-        );
-        
-        if (matchingSession) {
-          // If we found a completed session, navigate to its detail
-          router.push(`/workout-detail/${matchingSession.id}`);
-        } else {
-          // Otherwise, navigate to the template detail
-          router.push(`/workout-detail/template-${workout.template.id}`);
-        }
-      }
-      // } else {
-      //   // For incomplete workouts, go to today's workout with the template ID
-      //   router.push(`/todays-workout/template-${workout.template.id}`);
-      // }
-    } else {
-      Alert.alert('Info', 'No specific session found to start or view details for this workout.');
-    }
-  };
+  router.push(`/workout-detail/${workout.sessionId}`);
+  }
+  // const handleDayPress = (workout: WeeklyWorkout) => {
+  //   console.log('Pressed workout:', workout);
+  
+  //   if (!workout.template && !workout.sessionId) {
+  //     console.log('No workout scheduled for this day');
+  //     return;
+  //   }
+  
+  //   // If we have a session ID, always use that for navigation
+  //   if (workout.sessionId) {
+  //     console.log('Navigating with session ID:', workout.sessionId);
+  //     if (workout.completed) {
+  //       router.push(`/workout-detail/${workout.sessionId}`);
+  //     } else {
+  //       // For incomplete sessions, go to today's workout with the session ID
+  //       router.push(`/todays-workout/${workout.sessionId}`);
+  //     }
+  //   } 
+  //   // If we only have a template ID (no session ID)
+  //   else if (workout.template && workout.template.id) {
+  //     console.log('Navigating with template ID:', workout.template.id);
+  //     if (workout.completed) {
+  //       router.push(`/workout-detail/${workout.template.id}`);
+  //     } else {
+  //       router.push(`/todays-workout/${workout.template.id}`);
+  //     }
+  //   } else {
+  //     console.log('No valid ID found for navigation');
+  //     Alert.alert('Info', 'No workout details available for this day.');
+  //   }
+  // };
+
 
   const getWorkoutCount = () => {
     return weeklyWorkouts.filter(w => w.template !== null).length;
@@ -483,6 +468,11 @@ export default function CoachingClientView() {
             {renderMacrosSection()}
             {renderResourcesSection()}
             {data && 'clientAssignment' in data && data.clientAssignment && (
+              <TouchableOpacity
+               
+                onPress={() => router.push('/team')}
+              >
+
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <Text style={styles.cardTitle}>Your Team</Text>
@@ -503,6 +493,7 @@ export default function CoachingClientView() {
                   </View>
                 )}
               </View>
+            </TouchableOpacity>
             )}
           </>
         ) : (

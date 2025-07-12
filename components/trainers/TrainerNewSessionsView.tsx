@@ -173,65 +173,68 @@ export default function TrainerNewSessionsView() {
       Alert.alert('Error', 'Please select a client');
       return;
     }
-
+  
     if (!sessionType) {
       Alert.alert('Error', 'Please select a session type');
       return;
     }
-
+  
     if (!location) {
       Alert.alert('Error', 'Please select a location');
       return;
     }
-
+  
     setLoading(true);
     try {
-      // Get current trainer ID from Supabase Auth
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData?.user?.id) {
-        throw new Error('Could not get trainer ID');
-      }
-      const trainerId = userData.user.id;
-
-      // Prepare session data for DB
+      // Get current trainer's profile ID
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user?.id) throw new Error('Could not get trainer ID');
+  
+      // Get trainer's profile ID
+      const { data: trainerProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', user.id)
+        .single();
+      
+      if (profileError || !trainerProfile) throw new Error('Could not get trainer profile');
+  
+      // Format the session data according to the schema
       const sessionData = {
         client_id: selectedClient.id,
-        trainer_id: trainerId,
+        trainer_id: trainerProfile.id,
         session_type: sessionType,
-        session_date: selectedDate && typeof selectedDate.toISOString === 'function' ? selectedDate.toISOString().split('T')[0] : '',
-       scheduled_time: selectedTime.toTimeString().slice(0, 5),
+        scheduled_date: selectedDate.toISOString().split('T')[0],
+        scheduled_time: selectedTime.toTimeString().slice(0, 5),
         duration: parseInt(duration),
-        location,
-        trainer_notes: notes.trim(),
+        location: location,
         status: 'scheduled',
+        session_data: {
+          notes: notes.trim(),
+          type: sessionType
+        },
+        completion_data: {} // Empty object for new sessions
       };
-
-      // Insert session into Supabase
+  
+      // Insert session into training_sessions table
       const { error: insertError } = await supabase
         .from('training_sessions')
         .insert([sessionData]);
+  
       if (insertError) throw insertError;
-
+  
       Alert.alert(
         'Success',
         `Session ${isEditing ? 'updated' : 'scheduled'} successfully!`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              router.back();
-            },
-          },
-        ]
+        [{ text: 'OK', onPress: () => router.back() }]
       );
     } catch (error) {
       console.error('Error saving session:', error);
-      Alert.alert('Error', 'Failed to save session');
+      Alert.alert('Error', 'Failed to save session. Please try again.');
     } finally {
       setLoading(false);
     }
   };
-
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-US', {
       weekday: 'long',

@@ -8,13 +8,14 @@ import {
   Alert,
   Modal,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Calendar, Clock, User, CreditCard as Edit3, Trash2, Copy, Play, Pause, CircleCheck as CheckCircle, X, Save, MoreHorizontal, Target, Activity } from 'lucide-react-native';
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { router, useLocalSearchParams } from 'expo-router';
-import { WorkoutPlan, Client, DayOfWeek } from '@/types/workout';
-import { getWorkoutPlan, getTrainerClients, getWorkoutTemplatesForPlans } from '@/lib/planDatabase';
+import { Client, DayOfWeek } from '@/types/workout';
+import { WorkoutPlan, getWorkoutPlan, getTrainerClients, getWorkoutTemplatesForPlans } from '@/lib/planDatabase';
 
 const daysOfWeek: DayOfWeek[] = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -39,19 +40,7 @@ export default function PlanDetailsScreen() {
     try {
       const planData = await getWorkoutPlan(id as string);
       if (planData) {
-        // Map DB fields to UI fields for WorkoutPlan
-        const mappedPlan = {
-          id: planData.id,
-          clientId: planData.client_id,
-          trainerId: planData.trainer_id,
-          name: planData.name,
-          startDate: planData.start_date,
-          endDate: planData.end_date,
-          schedule: planData.schedule_data,
-          createdAt: planData.created_at,
-          updatedAt: planData.updated_at,
-        };
-        setPlan(mappedPlan);
+        setPlan(planData);
 
         const clients = await getTrainerClients();
         const clientData = clients.find(c => c.id === planData.client_id) || null;
@@ -59,20 +48,21 @@ export default function PlanDetailsScreen() {
           clientData
             ? {
                 id: clientData.id,
-                name: clientData.full_name,
-                email: clientData.email,
-                avatar: clientData.avatar,
-                joinDate: clientData.created_at,
-                trainerId: clientData.trainer_id || '',
+                name: String(clientData.full_name || 'Unknown Client'),
+                email: String(clientData.email || ''),
+                avatar: clientData.avatar ? String(clientData.avatar) : undefined,
+                joinDate: String(clientData.created_at || ''),
+                // trainerId: String(clientData.trainer_id || ''),
               }
             : null
         );
 
+        console.log('Client:', clientData);
         // Fetch templates for displaying template names
         const templatesData = await getWorkoutTemplatesForPlans();
         setTemplates(templatesData);
         console.log('Fetched templates:', templatesData);
-        console.log('Plan schedule:', mappedPlan.schedule);
+        console.log('Plan schedule:', planData.schedule_data);
       }
     } catch (error) {
       console.error('Error loading plan details:', error);
@@ -92,9 +82,9 @@ export default function PlanDetailsScreen() {
     
     const today = new Date().toISOString().split('T')[0];
     
-    if (plan.endDate < today) {
+    if (plan.end_date < today) {
       return { status: 'Completed', color: colors.success };
-    } else if (plan.startDate > today) {
+    } else if (plan.start_date > today) {
       return { status: 'Upcoming', color: colors.warning };
     } else {
       return { status: 'Active', color: colors.primary };
@@ -104,8 +94,8 @@ export default function PlanDetailsScreen() {
   const getDuration = (): string => {
     if (!plan) return '';
     
-    const start = new Date(plan.startDate);
-    const end = new Date(plan.endDate);
+    const start = new Date(plan.start_date);
+    const end = new Date(plan.end_date);
     const diffTime = Math.abs(end.getTime() - start.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
@@ -121,8 +111,25 @@ export default function PlanDetailsScreen() {
   };
 
   const getWorkoutsPerWeek = (): number => {
-    if (!plan) return 0;
-    return Object.values(plan.schedule).filter(Boolean).length;
+    if (!plan || !plan.schedule_data) return 0;
+    return Object.values(plan.schedule_data).filter(Boolean).length;
+  };
+
+  const getScheduleType = (): string => {
+    if (!plan) return '';
+    
+    // If schedule_type exists, use it
+    if (plan.schedule_type) {
+      return plan.schedule_type;
+    }
+    
+    // Otherwise, determine from schedule data
+    if (plan.schedule_data) {
+      const workoutDays = Object.values(plan.schedule_data).filter(Boolean).length;
+      return `${workoutDays}x per week`;
+    }
+    
+    return 'Custom schedule';
   };
 
   const handleEditPlan = () => {
@@ -153,7 +160,7 @@ export default function PlanDetailsScreen() {
   };
 
   const handleStartWorkout = (day: DayOfWeek) => {
-    const templateId = plan?.schedule[day];
+    const templateId = plan?.schedule_data?.[day];
     if (templateId) {
       router.push(`/start-workout/${templateId}`);
     }
@@ -169,6 +176,7 @@ export default function PlanDetailsScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Loading plan details...</Text>
         </View>
       </SafeAreaView>
@@ -223,7 +231,7 @@ export default function PlanDetailsScreen() {
               <Text style={styles.planName}>{plan.name}</Text>
               <Text style={styles.clientName}>{client?.name || 'Unknown Client'}</Text>
               <Text style={styles.planDates}>
-                {new Date(plan.startDate).toLocaleDateString()} - {new Date(plan.endDate).toLocaleDateString()}
+                {new Date(plan.start_date).toLocaleDateString()} - {new Date(plan.end_date).toLocaleDateString()}
               </Text>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: color }]}>
@@ -246,8 +254,8 @@ export default function PlanDetailsScreen() {
             
             <View style={styles.statItem}>
               <Target size={20} color={colors.warning} />
-              <Text style={styles.statLabel}>Progress</Text>
-              <Text style={styles.statValue}>65%</Text>
+              <Text style={styles.statLabel}>Schedule</Text>
+              <Text style={styles.statValue}>{getScheduleType()}</Text>
             </View>
           </View>
         </View>
@@ -257,8 +265,8 @@ export default function PlanDetailsScreen() {
           <Text style={styles.scheduleTitle}>Weekly Schedule</Text>
           
           {daysOfWeek.map((day) => {
-            const templateId = plan.schedule[day];
-            const hasWorkout = templateId !== null;
+            const templateId = plan.schedule_data?.[day];
+            const hasWorkout = templateId !== null && templateId !== undefined;
             
             return (
               <View key={day} style={styles.dayRow}>
@@ -378,6 +386,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontFamily: 'Inter-Regular',
     fontSize: 16,
     color: colors.textSecondary,
+    marginTop: 16,
   },
   errorContainer: {
     flex: 1,

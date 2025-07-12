@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,42 +12,23 @@ import {
   Alert,
   Platform,
   Share,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Plus, X, Camera, Image as ImageIcon, Grid3x3 as Grid3X3, List, Calendar, Weight, Percent, MoveHorizontal as MoreHorizontal, TrendingUp, Target, Star, Filter, Search, Share as ShareIcon, Download, Eye, Zap, Ellipsis, Trash2, Info, Copy, Heart, Edit } from 'lucide-react-native';
-
-// import { ArrowLeft, Plus, X, Camera, Image as ImageIcon, Grid3x3 as Grid3X3, List, Calendar, Weight, Percent, MoveHorizontal as MoreHorizontal, TrendingUp, Target, Star, Filter, Search, Share, Download, Eye, Zap, Ellipsis, Trash2, Info, Copy, Heart, Edit } from 'lucide-react-native';
+import { ArrowLeft, Plus, X, Camera, Image as ImageIcon, Grid3x3 as Grid3X3, List, Calendar, Weight, Percent, MoveHorizontal as MoreHorizontal, TrendingUp, Target, Star, Filter, Search, Share as ShareIcon, Download, Eye, Zap, Ellipsis, Trash2, Info, Copy, Heart, Edit, ImagePlus } from 'lucide-react-native';
 import { useColorScheme, getColors } from '@/hooks/useColorScheme';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import { router } from 'expo-router';
 import BottomSheet from '@/components/BottomSheet';
 import * as MediaLibrary from 'expo-media-library';
+import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Clipboard from 'expo-clipboard';
+import { useProgressPhotos } from '@/hooks/useProgressPhotos';
+import type { ProgressPhoto } from '@/lib/supabase';
 
 const { width, height } = Dimensions.get('window');
-
-interface ProgressPhoto {
-  id: string;
-  imageUri: string;
-  weight?: number;
-  bodyFat?: number;
-  musclePercentage?: number;
-  measurements?: {
-    chest?: number;
-    waist?: number;
-    hips?: number;
-    arms?: number;
-    thighs?: number;
-  };
-  date: string;
-  time: string;
-  tags?: string[];
-  pose: 'front' | 'side' | 'back' | 'custom';
-  notes?: string;
-  mood?: 'motivated' | 'confident' | 'determined' | 'proud' | 'focused';
-  isFavorite?: boolean;
-}
 
 interface ComparisonData {
   photo1: ProgressPhoto;
@@ -61,31 +42,51 @@ export default function ProgressPhotoScreen() {
   const colorScheme = useColorScheme();
   const colors = getColors(colorScheme);
   const styles = createStyles(colors);
-const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
-const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
+
+  // Use the custom hook for Supabase integration
+  const {
+    photos,
+    loading,
+    error,
+    user,
+    addPhoto,
+    updatePhoto,
+    deletePhoto,
+    toggleFavorite,
+    getFilteredPhotos,
+    refreshPhotos,
+  } = useProgressPhotos();
+
+  const [isBottomSheetVisible, setIsBottomSheetVisible] = useState(false);
+  const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
   const [currentPhotoId, setCurrentPhotoId] = useState<string>('');
- const showBottomSheet = () => {
+  const [refreshing, setRefreshing] = useState(false);
+
+  const showBottomSheet = () => {
     setIsBottomSheetVisible(true);
   };
-
 
   const hideBottomSheet = () => {
     setIsBottomSheetVisible(false);
   };
 
-   const showBottomMenu = (photoId: string) => {
+  const showBottomMenu = (photoId: string) => {
     setCurrentPhotoId(photoId);
     setIsBottomMenuVisible(true);
   };
-  
 
   const hideBottomMenu = () => {
     setCurrentPhotoId('');
-
     setIsBottomMenuVisible(false);
   };
 
- const handleSharePhoto = async () => {
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refreshPhotos();
+    setRefreshing(false);
+  }, [refreshPhotos]);
+
+  const handleSharePhoto = async () => {
     try {
       const currentPhoto = photos.find(p => p.id === currentPhotoId);
       if (!currentPhoto) {
@@ -94,7 +95,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
       }
 
       const result = await Share.share({
-        url: currentPhoto.imageUri,
+        url: currentPhoto.image_url,
         message: `Check out my progress photo! ${currentPhoto.notes || ''}`,
       });
       
@@ -116,11 +117,11 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
     }
 
     // Set the photo for editing and show the photo modal
-    setTempImageUri(currentPhoto.imageUri);
+    setTempImageUri(currentPhoto.image_url);
     setNewPhoto({
       weight: currentPhoto.weight,
-      bodyFat: currentPhoto.bodyFat,
-      musclePercentage: currentPhoto.musclePercentage,
+      bodyFat: currentPhoto.body_fat,
+      musclePercentage: currentPhoto.muscle_percentage,
       measurements: currentPhoto.measurements,
       date: currentPhoto.date,
       time: currentPhoto.time,
@@ -149,15 +150,16 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
         return;
       }
 
-      // For web or external URLs, we'll show a success message
-      // In a real app, you'd need to download the image first
-      if (currentPhoto.imageUri.startsWith('http')) {
-        Alert.alert('Success', 'Photo download initiated. Check your downloads folder.');
-      } else {
-        // Save to device gallery for local files
-        const asset = await MediaLibrary.createAssetAsync(currentPhoto.imageUri);
+      // Download and save to gallery
+      const fileUri = FileSystem.documentDirectory + `progress_photo_${Date.now()}.jpg`;
+      const downloadResult = await FileSystem.downloadAsync(currentPhoto.image_url, fileUri);
+      
+      if (downloadResult.status === 200) {
+        const asset = await MediaLibrary.createAssetAsync(downloadResult.uri);
         await MediaLibrary.createAlbumAsync('Progress Photos', asset, false);
         Alert.alert('Success', 'Photo saved to your gallery');
+      } else {
+        Alert.alert('Error', 'Failed to download photo');
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to download photo');
@@ -174,25 +176,9 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
         return;
       }
 
-      // Toggle favorite status
-      const newFavoriteStatus = !currentPhoto.isFavorite;
-      
-      // Update the photo in the photos array
-      setPhotos(prevPhotos => 
-        prevPhotos.map(photo => 
-          photo.id === currentPhotoId 
-            ? { ...photo, isFavorite: newFavoriteStatus }
-            : photo
-        )
-      );
-      
-      Alert.alert(
-        'Success', 
-        newFavoriteStatus ? 'Added to favorites' : 'Removed from favorites'
-      );
+      await toggleFavorite(currentPhotoId);
     } catch (error) {
-      Alert.alert('Error', 'Failed to update favorite status');
-      console.error(error);
+      console.error('Error toggling favorite:', error);
     }
     hideBottomMenu();
   };
@@ -205,15 +191,8 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
         return;
       }
 
-      // For web/external URLs, copy the URL to clipboard
-      if (currentPhoto.imageUri.startsWith('http')) {
-        await Clipboard.setStringAsync(currentPhoto.imageUri);
-        Alert.alert('Success', 'Photo URL copied to clipboard');
-      } else {
-        // For local files, copy image to clipboard
-        await Clipboard.setImageAsync(currentPhoto.imageUri);
-        Alert.alert('Success', 'Photo copied to clipboard');
-      }
+      await Clipboard.setStringAsync(currentPhoto.image_url);
+      Alert.alert('Success', 'Photo URL copied to clipboard');
     } catch (error) {
       Alert.alert('Error', 'Failed to copy photo');
       console.error(error);
@@ -228,7 +207,6 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
       return;
     }
 
-    // Set the selected photo to show in detail modal
     setSelectedPhoto(currentPhoto);
     hideBottomMenu();
   };
@@ -253,18 +231,9 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
           style: 'destructive',
           onPress: async () => {
             try {
-              // Remove photo from the photos array
-              setPhotos(prevPhotos => prevPhotos.filter(photo => photo.id !== currentPhotoId));
-              
-              // Delete local file if it's a local file
-              if (currentPhoto.imageUri.startsWith('file://')) {
-                await FileSystem.deleteAsync(currentPhoto.imageUri);
-              }
-              
-              Alert.alert('Success', 'Photo deleted successfully');
+              await deletePhoto(currentPhotoId);
             } catch (error) {
-              Alert.alert('Error', 'Failed to delete photo');
-              console.error(error);
+              console.error('Error deleting photo:', error);
             }
           },
         },
@@ -272,63 +241,6 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
     );
     hideBottomMenu();
   };
-
-
-  const [photos, setPhotos] = useState<ProgressPhoto[]>([
-    {
-      id: '1',
-      imageUri: 'https://images.pexels.com/photos/1043471/pexels-photo-1043471.jpeg?auto=compress&cs=tinysrgb&w=800',
-      weight: 69.5,
-      bodyFat: 15,
-      musclePercentage: 42,
-      measurements: {
-        chest: 102,
-        waist: 81,
-        arms: 35,
-      },
-      date: '2025-01-15',
-      time: '08:30',
-      tags: ['morning', 'baseline'],
-      pose: 'front',
-      notes: 'Starting my fitness journey!',
-      mood: 'motivated',
-      isFavorite: true
-
-    },
-    {
-      id: '2',
-      imageUri: 'https://images.pexels.com/photos/1552242/pexels-photo-1552242.jpeg?auto=compress&cs=tinysrgb&w=800',
-      weight: 68.2,
-      bodyFat: 13.5,
-      musclePercentage: 44,
-      measurements: {
-        chest: 104,
-        waist: 79,
-        arms: 36,
-      },
-      date: '2025-01-08',
-      time: '07:45',
-      tags: ['progress', 'week4'],
-      pose: 'front',
-      notes: 'Feeling stronger every day!',
-      isFavorite: true,
-      mood: 'confident',
-    },
-    {
-      id: '3',
-      imageUri: 'https://images.pexels.com/photos/3822356/pexels-photo-3822356.jpeg?auto=compress&cs=tinysrgb&w=800',
-      weight: 67.8,
-      bodyFat: 12.8,
-      musclePercentage: 45,
-      date: '2025-01-01',
-      time: '09:15',
-      tags: ['newyear', 'goals'],
-      pose: 'side',
-      notes: 'New year, new me!',
-      isFavorite: false,
-      mood: 'determined',
-    }
-  ]);
 
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'comparison'>('grid');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -341,12 +253,13 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPose, setFilterPose] = useState<string>('all');
   const [filterTimeframe, setFilterTimeframe] = useState<string>('all');
+  const [filteredPhotos, setFilteredPhotos] = useState<ProgressPhoto[]>([]);
   
   // Form states
   const [newPhoto, setNewPhoto] = useState<Partial<ProgressPhoto>>({
     weight: undefined,
-    bodyFat: undefined,
-    musclePercentage: undefined,
+    body_fat: undefined,
+    muscle_percentage: undefined,
     measurements: {},
     date: new Date().toISOString().split('T')[0],
     time: new Date().toTimeString().slice(0, 5),
@@ -356,6 +269,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
   });
   const [tempImageUri, setTempImageUri] = useState<string>('');
   const [newTag, setNewTag] = useState('');
+  const [uploading, setUploading] = useState(false);
 
   // Camera states
   const [facing, setFacing] = useState<CameraType>('back');
@@ -370,14 +284,39 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
     focused: '⚡'
   };
 
+  // Apply filters with debouncing
+  React.useEffect(() => {
+    const timeoutId = setTimeout(async () => {
+      if (user) {
+        try {
+          const filtered = await getFilteredPhotos({
+            pose: filterPose !== 'all' ? filterPose : undefined,
+            timeframe: filterTimeframe !== 'all' ? filterTimeframe : undefined,
+            searchQuery: searchQuery.trim() || undefined,
+          });
+          setFilteredPhotos(filtered);
+        } catch (error) {
+          console.error('Error filtering photos:', error);
+          setFilteredPhotos(photos);
+        }
+      } else {
+        setFilteredPhotos([]);
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, filterPose, filterTimeframe, photos, user, getFilteredPhotos]);
+
   const handleAddPhoto = () => {
     setShowAddModal(true);
   };
 
   const handleTakePhoto = async () => {
+    hideBottomSheet();
+    
     if (Platform.OS === 'web') {
+      // For web, use a sample image
       setTempImageUri('https://images.pexels.com/photos/1043471/pexels-photo-1043471.jpeg?auto=compress&cs=tinysrgb&w=800');
-      setShowCameraModal(false);
       setShowPhotoModal(true);
     } else {
       if (!permission?.granted) {
@@ -391,16 +330,34 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
     }
   };
 
-  const handleOpenAlbum = () => {
-    const sampleImages = [
-      'https://images.pexels.com/photos/1552242/pexels-photo-1552242.jpeg?auto=compress&cs=tinysrgb&w=800',
-      'https://images.pexels.com/photos/3822356/pexels-photo-3822356.jpeg?auto=compress&cs=tinysrgb&w=800',
-      'https://images.pexels.com/photos/1043471/pexels-photo-1043471.jpeg?auto=compress&cs=tinysrgb&w=800'
-    ];
-    const randomImage = sampleImages[Math.floor(Math.random() * sampleImages.length)];
-    setTempImageUri(randomImage);
-    setShowAddModal(false);
-    setShowPhotoModal(true);
+  const handleOpenAlbum = async () => {
+    hideBottomSheet();
+    
+    try {
+      // Request permission to access media library
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (permissionResult.granted === false) {
+        Alert.alert('Permission required', 'Please grant photo library access to select images');
+        return;
+      }
+
+      // Launch image picker
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [3, 4],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setTempImageUri(result.assets[0].uri);
+        setShowPhotoModal(true);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
+      Alert.alert('Error', 'Failed to open gallery');
+    }
   };
 
   const capturePhoto = async () => {
@@ -418,68 +375,64 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
     }
   };
 
-  const handleSavePhoto = () => {
-    if (!tempImageUri) return;
+  const handleSavePhoto = async () => {
+    if (!tempImageUri || !user) return;
 
     const isEditing = currentPhotoId !== '';
+    setUploading(true);
     
-    if (isEditing) {
-      // Update existing photo
-      setPhotos(prevPhotos => 
-        prevPhotos.map(photo => 
-          photo.id === currentPhotoId 
-            ? {
-                ...photo,
-                weight: newPhoto.weight,
-                bodyFat: newPhoto.bodyFat,
-                musclePercentage: newPhoto.musclePercentage,
-                measurements: newPhoto.measurements,
-                date: newPhoto.date || photo.date,
-                time: newPhoto.time || photo.time,
-                tags: newPhoto.tags || photo.tags,
-                pose: newPhoto.pose || photo.pose,
-                notes: newPhoto.notes,
-                mood: newPhoto.mood || photo.mood
-              }
-            : photo
-        )
-      );
-    } else {
-      // Add new photo
-      const newPhotoData: ProgressPhoto = {
-        id: Date.now().toString(),
-        imageUri: tempImageUri,
-        weight: newPhoto.weight,
-        bodyFat: newPhoto.bodyFat,
-        musclePercentage: newPhoto.musclePercentage,
-        measurements: newPhoto.measurements,
-        date: newPhoto.date || new Date().toISOString().split('T')[0],
-        time: newPhoto.time || new Date().toTimeString().slice(0, 5),
-        tags: newPhoto.tags || [],
-        pose: newPhoto.pose || 'front',
-        notes: newPhoto.notes,
-        mood: newPhoto.mood || 'motivated',
-        isFavorite: false
-      };
-
-      setPhotos(prev => [newPhotoData, ...prev]);
+    try {
+      if (isEditing) {
+        // Update existing photo
+        await updatePhoto(currentPhotoId, {
+          weight: newPhoto.weight,
+          bodyFat: newPhoto.body_fat,
+          musclePercentage: newPhoto.muscle_percentage,
+          measurements: newPhoto.measurements,
+          date: newPhoto.date,
+          time: newPhoto.time,
+          tags: newPhoto.tags,
+          pose: newPhoto.pose,
+          notes: newPhoto.notes,
+          mood: newPhoto.mood
+        });
+      } else {
+        // Add new photo
+        await addPhoto({
+          imageUri: tempImageUri,
+          weight: newPhoto.weight,
+          bodyFat: newPhoto.body_fat,
+          musclePercentage: newPhoto.muscle_percentage,
+          measurements: newPhoto.measurements,
+          date: newPhoto.date,
+          time: newPhoto.time,
+          tags: newPhoto.tags,
+          pose: newPhoto.pose,
+          notes: newPhoto.notes,
+          mood: newPhoto.mood
+        });
+      }
+      
+      // Reset form
+      setNewPhoto({
+        weight: undefined,
+        body_fat: undefined,
+        muscle_percentage: undefined,
+        measurements: {},
+        date: new Date().toISOString().split('T')[0],
+        time: new Date().toTimeString().slice(0, 5),
+        tags: [],
+        pose: 'front',
+        mood: 'motivated'
+      });
+      setTempImageUri('');
+      setCurrentPhotoId('');
+      setShowPhotoModal(false);
+    } catch (error) {
+      console.error('Error saving photo:', error);
+    } finally {
+      setUploading(false);
     }
-    
-    // Reset form
-    setNewPhoto({
-      weight: undefined,
-      bodyFat: undefined,
-      musclePercentage: undefined,
-      measurements: {},
-      date: new Date().toISOString().split('T')[0],
-      time: new Date().toTimeString().slice(0, 5),
-      tags: [],
-      pose: 'front',
-      mood: 'motivated'
-    });
-    setTempImageUri('');
-    setCurrentPhotoId('');
-    setShowPhotoModal(false);
   };
 
   const handleAddTag = () => {
@@ -507,8 +460,8 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
         } else if (prev.length < 2) {
           const newSelection = [...prev, photoId];
           if (newSelection.length === 2) {
-            const photo1 = photos.find(p => p.id === newSelection[0])!;
-            const photo2 = photos.find(p => p.id === newSelection[1])!;
+            const photo1 = filteredPhotos.find(p => p.id === newSelection[0])!;
+            const photo2 = filteredPhotos.find(p => p.id === newSelection[1])!;
             const comparison = calculateComparison(photo1, photo2);
             setComparisonData(comparison);
             setShowComparison(true);
@@ -518,7 +471,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
         return prev;
       });
     } else {
-      setSelectedPhoto(photos.find(p => p.id === photoId) || null);
+      setSelectedPhoto(filteredPhotos.find(p => p.id === photoId) || null);
     }
   };
 
@@ -528,7 +481,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
     const daysBetween = Math.abs((date2.getTime() - date1.getTime()) / (1000 * 60 * 60 * 24));
     
     const weightChange = (photo2.weight || 0) - (photo1.weight || 0);
-    const bodyFatChange = (photo2.bodyFat || 0) - (photo1.bodyFat || 0);
+    const bodyFatChange = (photo2.body_fat || 0) - (photo1.body_fat || 0);
 
     return {
       photo1: date1 < date2 ? photo1 : photo2,
@@ -539,46 +492,24 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
     };
   };
 
-  const getFilteredPhotos = () => {
-    let filtered = photos;
-
-    if (searchQuery) {
-      filtered = filtered.filter(photo =>
-        photo.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        photo.notes?.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    if (filterPose !== 'all') {
-      filtered = filtered.filter(photo => photo.pose === filterPose);
-    }
-
-    if (filterTimeframe !== 'all') {
-      const now = new Date();
-      const filterDate = new Date();
-      
-      switch (filterTimeframe) {
-        case 'week':
-          filterDate.setDate(now.getDate() - 7);
-          break;
-        case 'month':
-          filterDate.setMonth(now.getMonth() - 1);
-          break;
-        case '3months':
-          filterDate.setMonth(now.getMonth() - 3);
-          break;
-      }
-      
-      if (filterTimeframe !== 'all') {
-        filtered = filtered.filter(photo => new Date(photo.date) >= filterDate);
-      }
-    }
-
-    return filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  };
+  const renderEmptyState = () => (
+    <View style={styles.emptyContainer}>
+      <ImagePlus size={64} color={colors.textTertiary} />
+      <Text style={styles.emptyTitle}>No Progress Photos Yet</Text>
+      <Text style={styles.emptySubtitle}>
+        Start documenting your fitness journey by adding your first progress photo
+      </Text>
+      <TouchableOpacity style={styles.emptyButton} onPress={showBottomSheet}>
+        <Plus size={20} color="#FFFFFF" />
+        <Text style={styles.emptyButtonText}>Add Your First Photo</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   const renderGridView = () => {
-    const filteredPhotos = getFilteredPhotos();
+    if (filteredPhotos.length === 0) {
+      return renderEmptyState();
+    }
     
     return (
       <View style={styles.gridContainer}>
@@ -591,7 +522,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
             ]}
             onPress={() => handlePhotoSelect(photo.id)}
           >
-            <Image source={{ uri: photo.imageUri }} style={styles.gridImage} />
+            <Image source={{ uri: photo.image_url }} style={styles.gridImage} />
             <View style={styles.gridOverlay}>
               <Text style={styles.gridDate}>
                 {new Date(photo.date).toLocaleDateString('en-US', { 
@@ -605,6 +536,11 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                 </Text>
               )}
             </View>
+            {photo.is_favorite && (
+              <View style={styles.favoriteIndicator}>
+                <Star size={12} color="#FFD700" fill="#FFD700" />
+              </View>
+            )}
             {selectedPhotos.includes(photo.id) && (
               <View style={styles.selectionIndicator}>
                 <Text style={styles.selectionNumber}>
@@ -619,7 +555,9 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
   };
 
   const renderListView = () => {
-    const filteredPhotos = getFilteredPhotos();
+    if (filteredPhotos.length === 0) {
+      return renderEmptyState();
+    }
     
     return (
       <View style={styles.listContainer}>
@@ -629,7 +567,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
             style={styles.listItem}
             onPress={() => handlePhotoSelect(photo.id)}
           >
-            <Image source={{ uri: photo.imageUri }} style={styles.listImage} />
+            <Image source={{ uri: photo.image_url }} style={styles.listImage} />
             <View style={styles.listContent}>
               <View style={styles.listHeader}>
                 <Text style={styles.listDate}>
@@ -639,22 +577,27 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                     day: 'numeric'
                   })}
                 </Text>
-                {photo.mood && (
-                  <Text style={styles.listMood}>
-                    {moodEmojis[photo.mood]}
-                  </Text>
-                )}
+                <View style={styles.listHeaderRight}>
+                  {photo.mood && (
+                    <Text style={styles.listMood}>
+                      {moodEmojis[photo.mood]}
+                    </Text>
+                  )}
+                  {photo.is_favorite && (
+                    <Star size={16} color="#FFD700" fill="#FFD700" />
+                  )}
+                </View>
               </View>
               
               <View style={styles.listMetrics}>
                 {photo.weight && (
                   <Text style={styles.listMetric}>Weight: {photo.weight} kg</Text>
                 )}
-                {photo.bodyFat && (
-                  <Text style={styles.listMetric}>Body Fat: {photo.bodyFat}%</Text>
+                {photo.body_fat && (
+                  <Text style={styles.listMetric}>Body Fat: {photo.body_fat}%</Text>
                 )}
-                {photo.musclePercentage && (
-                  <Text style={styles.listMetric}>Muscle: {photo.musclePercentage}%</Text>
+                {photo.muscle_percentage && (
+                  <Text style={styles.listMetric}>Muscle: {photo.muscle_percentage}%</Text>
                 )}
               </View>
               
@@ -692,6 +635,19 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
     </View>
   );
 
+  if (!user) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.authContainer}>
+          <Text style={styles.authTitle}>Please Sign In</Text>
+          <Text style={styles.authSubtitle}>
+            You need to be signed in to view and manage your progress photos
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
@@ -700,15 +656,10 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
           <ArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.title}>Progress Photos</Text>
-        {/* <TouchableOpacity onPress={handleAddPhoto} style={styles.addButton}>
-          <Plus size={20} color={colors.primary} />
-          <Text style={styles.addButtonText}>Add</Text>
-        </TouchableOpacity> */}
         <TouchableOpacity onPress={showBottomSheet} style={styles.addButton}>
           <Plus size={20} color={colors.primary} />
           <Text style={styles.addButtonText}>Add</Text>
         </TouchableOpacity>
-       
       </View>
 
       {/* Search and Filters */}
@@ -803,37 +754,30 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
       </View>
 
       {/* Content */}
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {viewMode === 'grid' && renderGridView()}
-        {viewMode === 'list' && renderListView()}
-        {viewMode === 'comparison' && renderComparisonView()}
-        <View style={{ height: 100 }} />
-      </ScrollView>
-
-      {/* Add Photo Modal */}
-      {/* <Modal
-        visible={showAddModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowAddModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHandle} />
-          <Text style={styles.modalTitle}>Add Progress Photo</Text>
-          <Text style={styles.modalSubtitle}>Document your fitness journey</Text>
-          
-          <View style={styles.modalButtons}>
-            <TouchableOpacity style={styles.modalButton} onPress={handleTakePhoto}>
-              <Camera size={24} color={colors.primary} />
-              <Text style={styles.modalButtonText}>Take Photo</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.modalButton} onPress={handleOpenAlbum}>
-              <ImageIcon size={24} color={colors.primary} />
-              <Text style={styles.modalButtonText}>Choose from Gallery</Text>
-            </TouchableOpacity>
-          </View>
+      {loading && photos.length === 0 ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading your photos...</Text>
         </View>
-      </Modal> */}
+      ) : (
+        <ScrollView 
+          style={styles.content} 
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
+        >
+          {viewMode === 'grid' && renderGridView()}
+          {viewMode === 'list' && renderListView()}
+          {viewMode === 'comparison' && renderComparisonView()}
+          <View style={{ height: 100 }} />
+        </ScrollView>
+      )}
 
       {/* Bottom Sheet Component */}
       <BottomSheet
@@ -841,31 +785,30 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
         onClose={hideBottomSheet}
         title="Add Photos"
         colors={colors}
-        snapPoints={[0.3, 0.6, 0.9]} // 30%, 60%, 90% of screen height
-        initialSnap={0} // Start at first snap point (30%)
+        // snapPoints={[0.3, 0.6, 0.9]}
+        snapPoints={[0.6, 0.9]}
+        initialSnap={0}
         showHandle={true}
         showHeader={true}
         enablePanGesture={true}
         closeOnBackdropPress={true}
       >
-        {/* Content inside the bottom sheet */}
         <ScrollView showsVerticalScrollIndicator={false}>
-           <View  >
-          {/* <View style={styles.modalHandle} /> */}
-          <Text style={styles.modalTitle}>Add Progress Photo</Text>
-          <Text style={styles.modalSubtitle}>Document your fitness journey</Text>
-          
-          <View style={styles.modalButtons}>
-            <TouchableOpacity style={styles.modalButton} onPress={handleTakePhoto}>
-              <Camera size={24} color={colors.primary} />
-              <Text style={styles.modalButtonText}>Take Photo</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.modalButton} onPress={handleOpenAlbum}>
-              <ImageIcon size={24} color={colors.primary} />
-              <Text style={styles.modalButtonText}>Choose from Gallery</Text>
-            </TouchableOpacity>
+          <View>
+            <Text style={styles.modalTitle}>Add Progress Photo</Text>
+            <Text style={styles.modalSubtitle}>Document your fitness journey</Text>
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalButton} onPress={handleTakePhoto}>
+                <Camera size={24} color={colors.primary} />
+                <Text style={styles.modalButtonText}>Take Photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalButton} onPress={handleOpenAlbum}>
+                <ImageIcon size={24} color={colors.primary} />
+                <Text style={styles.modalButtonText}>Choose from Gallery</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
         </ScrollView>
       </BottomSheet>
 
@@ -925,10 +868,17 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
             </TouchableOpacity>
             <Text style={styles.photoModalTitle}>
               {currentPhotoId ? 'Edit Photo' : 'Add Photo Details'}
-
             </Text>
-            <TouchableOpacity onPress={handleSavePhoto} style={styles.saveHeaderButton}>
-              <Text style={styles.saveHeaderButtonText}>Save</Text>
+            <TouchableOpacity 
+              onPress={handleSavePhoto} 
+              style={[styles.saveHeaderButton, uploading && styles.disabledButton]}
+              disabled={uploading}
+            >
+              {uploading ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.saveHeaderButtonText}>Save</Text>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -1007,8 +957,8 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                   <Text style={styles.fieldLabel}>Body Fat (%)</Text>
                   <TextInput
                     style={styles.metricInput}
-                    value={newPhoto.bodyFat?.toString() || ''}
-                    onChangeText={(text) => setNewPhoto(prev => ({ ...prev, bodyFat: parseFloat(text) || undefined }))}
+                    value={newPhoto.body_fat?.toString() || ''}
+                    onChangeText={(text) => setNewPhoto(prev => ({ ...prev, body_fat: parseFloat(text) || undefined }))}
                     placeholder="--"
                     placeholderTextColor={colors.textTertiary}
                     keyboardType="numeric"
@@ -1019,8 +969,8 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                   <Text style={styles.fieldLabel}>Muscle (%)</Text>
                   <TextInput
                     style={styles.metricInput}
-                    value={newPhoto.musclePercentage?.toString() || ''}
-                    onChangeText={(text) => setNewPhoto(prev => ({ ...prev, musclePercentage: parseFloat(text) || undefined }))}
+                    value={newPhoto.muscle_percentage?.toString() || ''}
+                    onChangeText={(text) => setNewPhoto(prev => ({ ...prev, muscle_percentage: parseFloat(text) || undefined }))}
                     placeholder="--"
                     placeholderTextColor={colors.textTertiary}
                     keyboardType="numeric"
@@ -1092,14 +1042,13 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                 <ArrowLeft size={24} color={colors.text} />
               </TouchableOpacity>
               <Text style={styles.detailTitle}>Progress Photo</Text>
-               <TouchableOpacity onPress={() => showBottomMenu(selectedPhoto.id)} style={styles.addButton}>
-                <Ellipsis
-                 size={24} color={colors.text} />
+              <TouchableOpacity onPress={() => showBottomMenu(selectedPhoto.id)} style={styles.addButton}>
+                <Ellipsis size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.detailContent}>
-              <Image source={{ uri: selectedPhoto.imageUri }} style={styles.detailImage} />
+              <Image source={{ uri: selectedPhoto.image_url }} style={styles.detailImage} />
               
               <View style={styles.detailInfo}>
                 <View style={styles.detailDateRow}>
@@ -1123,7 +1072,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                   )}
                 </View>
                 
-                {(selectedPhoto.weight || selectedPhoto.bodyFat || selectedPhoto.musclePercentage) && (
+                {(selectedPhoto.weight || selectedPhoto.body_fat || selectedPhoto.muscle_percentage) && (
                   <View style={styles.detailMetrics}>
                     {selectedPhoto.weight && (
                       <View style={styles.detailMetric}>
@@ -1131,16 +1080,16 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                         <Text style={styles.detailMetricText}>{selectedPhoto.weight} kg</Text>
                       </View>
                     )}
-                    {selectedPhoto.bodyFat && (
+                    {selectedPhoto.body_fat && (
                       <View style={styles.detailMetric}>
                         <Percent size={16} color={colors.textSecondary} />
-                        <Text style={styles.detailMetricText}>{selectedPhoto.bodyFat}% body fat</Text>
+                        <Text style={styles.detailMetricText}>{selectedPhoto.body_fat}% body fat</Text>
                       </View>
                     )}
-                    {selectedPhoto.musclePercentage && (
+                    {selectedPhoto.muscle_percentage && (
                       <View style={styles.detailMetric}>
                         <Zap size={16} color={colors.textSecondary} />
-                        <Text style={styles.detailMetricText}>{selectedPhoto.musclePercentage}% muscle</Text>
+                        <Text style={styles.detailMetricText}>{selectedPhoto.muscle_percentage}% muscle</Text>
                       </View>
                     )}
                   </View>
@@ -1232,7 +1181,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
               <View style={styles.photoComparison}>
                 <View style={styles.comparisonPhoto}>
                   <Text style={styles.comparisonPhotoLabel}>Before</Text>
-                  <Image source={{ uri: comparisonData.photo1.imageUri }} style={styles.comparisonImage} />
+                  <Image source={{ uri: comparisonData.photo1.image_url }} style={styles.comparisonImage} />
                   <Text style={styles.comparisonPhotoDate}>
                     {new Date(comparisonData.photo1.date).toLocaleDateString()}
                   </Text>
@@ -1244,7 +1193,7 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                 
                 <View style={styles.comparisonPhoto}>
                   <Text style={styles.comparisonPhotoLabel}>After</Text>
-                  <Image source={{ uri: comparisonData.photo2.imageUri }} style={styles.comparisonImage} />
+                  <Image source={{ uri: comparisonData.photo2.image_url }} style={styles.comparisonImage} />
                   <Text style={styles.comparisonPhotoDate}>
                     {new Date(comparisonData.photo2.date).toLocaleDateString()}
                   </Text>
@@ -1277,11 +1226,11 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
                     </View>
                   )}
                   
-                  {comparisonData.photo1.bodyFat && comparisonData.photo2.bodyFat && (
+                  {comparisonData.photo1.body_fat && comparisonData.photo2.body_fat && (
                     <View style={styles.metricComparisonRow}>
                       <Text style={styles.metricComparisonCell}>Body Fat</Text>
-                      <Text style={styles.metricComparisonCell}>{comparisonData.photo1.bodyFat}%</Text>
-                      <Text style={styles.metricComparisonCell}>{comparisonData.photo2.bodyFat}%</Text>
+                      <Text style={styles.metricComparisonCell}>{comparisonData.photo1.body_fat}%</Text>
+                      <Text style={styles.metricComparisonCell}>{comparisonData.photo2.body_fat}%</Text>
                       <Text style={[
                         styles.metricComparisonCell,
                         { color: comparisonData.bodyFatChange < 0 ? colors.success : colors.warning }
@@ -1297,65 +1246,65 @@ const [isBottomMenuVisible, setIsBottomMenuVisible] = useState(false);
         )}
       </Modal>
 
-            {/* Bottom Menu for Photo Actions */}
-      
-<BottomSheet
-  visible={isBottomMenuVisible}
-  onClose={hideBottomMenu}
-  title="Photo Actions"
-  colors={colors}
-  snapPoints={[0.5, 0.8]} // 50%, 80% of screen height
-  initialSnap={0} // Start at first snap point (50%)
-  showHandle={true}
-  showHeader={true}
-  enablePanGesture={true}
-  closeOnBackdropPress={true}
->
-  {/* Content inside the bottom sheet */}
-  <ScrollView showsVerticalScrollIndicator={false}>
-    <View>
-      <Text style={styles.modalTitle}>Photo Options</Text>
-      <Text style={styles.modalSubtitle}>Choose an action for this photo</Text>
-      
-      <View style={styles.modalButtons}>
-        <TouchableOpacity style={styles.modalButton} onPress={handleSharePhoto}>
-          <ShareIcon size={24} color={colors.primary} />
-          <Text style={styles.modalButtonText}>Share Photo</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.modalButton} onPress={handleEditPhoto}>
-          <Edit size={24} color={colors.primary} />
-          <Text style={styles.modalButtonText}>Edit Photo</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.modalButton} onPress={handleDownloadPhoto}>
-          <Download size={24} color={colors.primary} />
-          <Text style={styles.modalButtonText}>Download</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.modalButton} onPress={handleSetAsFavorite}>
-          <Heart size={24} color={colors.primary} />
-          <Text style={styles.modalButtonText}>Add to Favorites</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.modalButton} onPress={handleCopyPhoto}>
-          <Copy size={24} color={colors.primary} />
-          <Text style={styles.modalButtonText}>Copy Photo</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.modalButton} onPress={handleViewDetails}>
-          <Info size={24} color={colors.primary} />
-          <Text style={styles.modalButtonText}>View Details</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={[styles.modalButton, styles.deleteButton]} onPress={handleDeletePhoto}>
-          <Trash2 size={24} color={colors.error || '#ff4444'} />
-          <Text style={[styles.modalButtonText, styles.deleteButtonText]}>Delete Photo</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  </ScrollView>
-</BottomSheet>
+      {/* Bottom Menu for Photo Actions */}
+      <BottomSheet
+        visible={isBottomMenuVisible}
+        onClose={hideBottomMenu}
+        title="Photo Actions"
+        colors={colors}
+        snapPoints={[ 0.9]}
+        initialSnap={0}
+        showHandle={true}
+        showHeader={true}
+        enablePanGesture={true}
+        closeOnBackdropPress={true}
+      >
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <View>
+            <Text style={styles.modalTitle}>Photo Options</Text>
+            <Text style={styles.modalSubtitle}>Choose an action for this photo</Text>
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalButton} onPress={handleSharePhoto}>
+                <ShareIcon size={24} color={colors.primary} />
+                <Text style={styles.modalButtonText}>Share Photo</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.modalButton} onPress={handleEditPhoto}>
+                <Edit size={24} color={colors.primary} />
+                <Text style={styles.modalButtonText}>Edit Photo</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.modalButton} onPress={handleDownloadPhoto}>
+                <Download size={24} color={colors.primary} />
+                <Text style={styles.modalButtonText}>Download</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.modalButton} onPress={handleSetAsFavorite}>
+                <Heart size={24} color={colors.primary} />
+                <Text style={styles.modalButtonText}>
+                  {photos.find(p => p.id === currentPhotoId)?.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.modalButton} onPress={handleCopyPhoto}>
+                <Copy size={24} color={colors.primary} />
+                <Text style={styles.modalButtonText}>Copy Photo URL</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.modalButton} onPress={handleViewDetails}>
+                <Info size={24} color={colors.primary} />
+                <Text style={styles.modalButtonText}>View Details</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={[styles.modalButton, styles.deleteButton]} onPress={handleDeletePhoto}>
+                <Trash2 size={24} color={colors.error || '#ff4444'} />
+                <Text style={[styles.modalButtonText, styles.deleteButtonText]}>Delete Photo</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </BottomSheet>
     </SafeAreaView>
   );
 }
@@ -1464,6 +1413,73 @@ const createStyles = (colors: any) => StyleSheet.create({
   content: {
     flex: 1,
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 16,
+    color: colors.textSecondary,
+    marginTop: 16,
+  },
+  authContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  authTitle: {
+    fontFamily: 'Inter-Bold',
+    fontSize: 24,
+    color: colors.text,
+    marginBottom: 12,
+  },
+  authSubtitle: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 16,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingVertical: 60,
+  },
+  emptyTitle: {
+    fontFamily: 'Inter-Bold',
+    fontSize: 24,
+    color: colors.text,
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  emptySubtitle: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 16,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 32,
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+  },
+  emptyButtonText: {
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 16,
+    color: '#FFFFFF',
+    marginLeft: 8,
+  },
   gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1503,6 +1519,17 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   gridMood: {
     fontSize: 12,
+  },
+  favoriteIndicator: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   selectionIndicator: {
     position: 'absolute',
@@ -1550,10 +1577,16 @@ const createStyles = (colors: any) => StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  listHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   listDate: {
     fontFamily: 'Inter-SemiBold',
     fontSize: 16,
     color: colors.text,
+    flex: 1,
   },
   listMood: {
     fontSize: 20,
@@ -1737,6 +1770,11 @@ const createStyles = (colors: any) => StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 8,
+    minWidth: 60,
+    alignItems: 'center',
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
   saveHeaderButtonText: {
     fontFamily: 'Inter-SemiBold',
@@ -2137,16 +2175,14 @@ const createStyles = (colors: any) => StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  // Delete button styles
-deleteButton: {
-  backgroundColor: '#ffebee', // Light red background
-  borderColor: '#ffcdd2',
-  borderWidth: 1,
-  marginTop: 10, // Extra spacing from other buttons
-},
-
-deleteButtonText: {
-  color: '#d32f2f', // Red text color
-  fontWeight: '600',
-}
+  deleteButton: {
+    backgroundColor: '#ffebee',
+    borderColor: '#ffcdd2',
+    borderWidth: 1,
+    marginTop: 10,
+  },
+  deleteButtonText: {
+    color: '#d32f2f',
+    fontWeight: '600',
+  },
 });

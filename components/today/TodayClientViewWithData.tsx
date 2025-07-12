@@ -1,4 +1,3 @@
-// components/today/TodayClientViewWithData.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -30,19 +29,19 @@ import { useColorScheme, getColors } from '../../hooks/useColorScheme';
 import { useTodayDataNew } from '../../hooks/useTodayDataNew';
 import { TodayClientData } from '../../lib/todayQueries';
 import { router } from 'expo-router';
-
+import { useAuth } from '@/contexts/AuthContext';
 export default function TodayClientViewNew() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = getColors(colorScheme);
   const styles = createStyles(colors);
   const { data, loading, error, refreshData } = useTodayDataNew();
-
+const { user } = useAuth();
   const [showMissedWorkout, setShowMissedWorkout] = useState(true);
 
   const clientData = data as TodayClientData;
   console.log('clientData:', clientData);
   console.log('clientData.profile:', clientData?.profile);
-
+  console.log('clientData.workoutSessions:', clientData?.workoutSessions);
   const getCurrentDate = () => {
     const date = new Date();
     return date.toLocaleDateString('en-US', { 
@@ -59,6 +58,93 @@ export default function TodayClientViewNew() {
     return 'Good Evening';
   };
 
+  const renderExercise = (exercise: any, index: number) => {
+    return (
+      <View key={index} style={styles.exerciseItem}>
+        <View style={styles.exerciseInfo}>
+          <Text style={styles.exerciseName}>{exercise.exercise.name}</Text>
+          <Text style={styles.exerciseDetails}>
+            Sets: {exercise.sets_config?.length || 0}{'  '}
+            Reps: {exercise.sets_config?.[0]?.reps || 'N/A'}{'  '}
+            Weight: {exercise.sets_config?.[0]?.weight || 'N/A'}
+          </Text>
+        </View>
+        <View style={styles.exerciseProgress}>
+          <Text style={styles.exerciseStatus}>Not Started</Text>
+        </View>
+      </View>
+    );
+  };
+
+  const renderWeeklyWorkouts = () => {
+    if (!clientData?.workoutSessions?.length) {
+      return null;
+    }
+
+    const getDayName = (dateStr: string) => {
+      return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short' });
+    };
+
+    const groupByDay = (sessions: any[]) => {
+      return sessions.reduce((acc: any, session: any) => {
+        const day = getDayName(session.date);
+        if (!acc[day]) {
+          acc[day] = [];
+        }
+        acc[day].push(session);
+        return acc;
+      }, {});
+    };
+
+    const weeklySessions = groupByDay(clientData.workoutSessions);
+
+    return (
+      <View style={styles.weeklyWorkoutsContainer}>
+        <Text style={styles.sectionTitle}>Training This Week</Text>
+        {Object.entries(weeklySessions).map(([day, sessions]) => (
+          <View key={day} style={styles.dayContainer}>
+            <Text style={styles.dayTitle}>{day}</Text>
+            {sessions.map((session, index) => (
+              <View key={index} style={styles.sessionItem}>
+                <Text style={styles.sessionTime}>
+                  {new Date(session.start_time).toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </Text>
+                <Text style={styles.sessionStatus}>
+                  {session.completed ? 'Completed' : 'Not Started'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  const renderTodayPlan = () => {
+    if (!clientData.todayPlan?.template) {
+      return (
+        <View style={styles.noPlanContainer}>
+          <Text style={styles.noPlanText}>No workout plan scheduled for today</Text>
+          <TouchableOpacity style={styles.refreshButton} onPress={refreshData}>
+            <Text style={styles.refreshButtonText}>Refresh</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.planContainer}>
+        <Text style={styles.planTitle}>Today's Workout Plan</Text>
+        <View style={styles.exercisesContainer}>
+          {clientData.todayPlan.template.exercises.map(renderExercise)}
+        </View>
+      </View>
+    );
+  };
+
   const userName = clientData?.profile?.full_name?.split(' ')[0] || 'User';
   const steps = clientData?.todayStats?.steps || 0;
   const stepGoal = 10000;
@@ -66,11 +152,18 @@ export default function TodayClientViewNew() {
 
   // Get today's workout
   // Find the first scheduled workout session for today that has a template
-  const todaysWorkoutSession = clientData?.workoutSessions?.find(session => 
-    session.template_id && session.template && !session.completed
-  );
+  const todaysWorkoutSession = clientData?.workoutSessions?.find(session => {
+    const sessionDate = new Date(session.scheduled_date).toDateString();
+    const today = new Date().toDateString();
+    return sessionDate === today && session.template_id && session.template && !session.completed;
+  });
   const completedWorkouts = clientData?.workoutSessions?.filter(session => session.completed) || [];
-
+  console.log('Today\'s workout sessions:', {
+    allSessions: clientData?.workoutSessions,
+    todaySession: todaysWorkoutSession,
+    today: new Date().toDateString()
+  });
+  
   // Get active goal
   const activeGoal = clientData?.activeGoals?.[0] || {
     title: 'Set your first goal',
@@ -496,6 +589,104 @@ const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  weeklyWorkoutsContainer: {
+    padding: 16,
+    backgroundColor: colors.background,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: colors.text,
+    marginBottom: 16,
+  },
+  dayContainer: {
+    marginBottom: 16,
+  },
+  dayTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  sessionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 12,
+    backgroundColor: colors.card,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  sessionTime: {
+    fontSize: 16,
+    color: colors.text,
+  },
+  sessionStatus: {
+    fontSize: 16,
+    color: colors.textSecondary,
+  },
+  planContainer: {
+    padding: 16,
+    backgroundColor: colors.background,
+  },
+  planTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: colors.text,
+    marginBottom: 16,
+  },
+  exercisesContainer: {
+    flex: 1,
+  },
+  exerciseItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: colors.card,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  exerciseInfo: {
+    flex: 1,
+  },
+  exerciseName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  exerciseDetails: {
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  exerciseProgress: {
+    alignItems: 'flex-end',
+  },
+  exerciseStatus: {
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  noPlanContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  noPlanText: {
+    fontSize: 16,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  refreshButton: {
+    padding: 12,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+  },
+  refreshButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
   },
   loadingContainer: {
     flex: 1,

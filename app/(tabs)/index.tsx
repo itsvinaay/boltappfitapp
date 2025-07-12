@@ -7,15 +7,16 @@ import { useUserRole } from '@/contexts/UserContext';
 import { useTodayDataNew } from '@/hooks/useTodayDataNew';
 
 // Import the new data-driven components
-import TodayClientViewNew from '@/components/today/TodayClientViewWithData';
-import TodayTrainerViewWithData from '@/components/today/TodayTrainerViewNew';
+// import TodayClientViewWithData from '@/components/today/TodayClientViewWithData';
+import TodayTrainerViewWithData from '@/components/today/TodayTrainerViewWithData';
 import TodayNutritionistViewWithData from '@/components/today/TodayNutritionistViewWithData';
 import TodayAdminViewWithData from '@/components/today/TodayAdminViewWithData';
 import TodayClientViewWithData from '@/components/today/TodayClientViewWithData';
+import TodayTrainerViewNew from '@/components/today/TodayTrainerViewNew';
 
 export default function TodayScreen() {
   const colorScheme = useColorScheme();
-  const colors = getColors(colorScheme);
+  const colors = getColors(colorScheme || 'light');
   const { userRole } = useUserRole();
   const { loading, error } = useTodayDataNew();
 
@@ -39,7 +40,7 @@ export default function TodayScreen() {
     case 'client':
       return <TodayClientViewWithData />;
     case 'trainer':
-      return <TodayTrainerViewWithData />;
+      return <TodayTrainerViewNew />;
     case 'nutritionist':
       return <TodayNutritionistViewWithData />;
     case 'admin':

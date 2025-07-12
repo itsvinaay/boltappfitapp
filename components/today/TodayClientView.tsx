@@ -29,7 +29,9 @@ import { router } from 'expo-router';
 import { WorkoutPlan, WorkoutTemplate } from '@/types/workout';
 import { getClientPlans } from '@/utils/storage';
 import { getDayOfWeek, isToday } from '@/utils/workoutUtils';
-import { getWorkoutTemplateById } from '@/lib/planDatabase';
+import { getWorkoutTemplate } from '../../lib/workoutTemplates';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 
 const { width } = Dimensions.get('window');
 
@@ -37,6 +39,7 @@ export default function TodayClientView() {
 const colorScheme = useColorScheme() ?? 'light';
   const colors = getColors(colorScheme);
   const styles = createStyles(colors);
+  const { user } = useAuth();
 
   const [showMissedWorkout, setShowMissedWorkout] = useState(true);
   const [steps, setSteps] = useState(2847);
@@ -57,14 +60,32 @@ const colorScheme = useColorScheme() ?? 'light';
 
   const loadTodaysWorkout = async () => {
     try {
+      // Check if user is authenticated
+      if (!user?.id) {
+        console.log('No authenticated user found');
+        return;
+      }
+
       // Get current client's plans
-      const clientId = 'client-1'; // TODO: Get from user context
+      // Get user profile first to get the profile ID
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', user.id)
+        .single();
+
+      if (!profile) {
+        console.log('No profile found for user');
+        return;
+      }
+
+      const clientId = profile.id;
       const plans = await getClientPlans(clientId);
       
       // Find active plan for today
       const today = new Date().toISOString().split('T')[0];
       const activePlan = plans.find(plan => 
-        plan.startDate <= today && plan.endDate >= today
+        plan.start_date <= today && plan.end_date >= today
       );
 
       if (activePlan) {
@@ -73,7 +94,7 @@ const colorScheme = useColorScheme() ?? 'light';
         const templateId = activePlan.schedule[dayOfWeek];
         
         if (templateId) {
-          const template = await getWorkoutTemplateById(templateId);
+          const template = await getWorkoutTemplate(templateId);
           setTodaysWorkout(template);
         }
       }
